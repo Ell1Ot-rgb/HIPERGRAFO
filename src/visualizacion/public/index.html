@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Omega 21 - Visualización en Tiempo Real</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.23.0/cytoscape.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #1e1e1e; color: #e0e0e0; margin: 0; display: grid; grid-template-columns: 2fr 1fr; grid-template-rows: 60vh 300px 200px; height: auto; }
+        #cy { border: 1px solid #333; background: #121212; grid-column: 1; grid-row: 1; }
+        #metrics { padding: 20px; grid-column: 2; grid-row: 1 / span 3; overflow-y: auto; }
+        #charts { grid-column: 1 / span 2; grid-row: 3; display: flex; padding: 10px; gap: 10px; background: #252526; height: 200px; }
+        .chart-container { flex: 1; position: relative; }
+        h2 { color: #4fc1ff; margin-top: 0; }
+        .stat-card { background: #333; padding: 10px; margin-bottom: 10px; border-radius: 5px; }
+        .stat-value { font-size: 1.5em; font-weight: bold; color: #9cdcfe; }
+        .dendrite-bar { height: 20px; background: #4caf50; margin: 2px 0; transition: width 0.5s; }
+        .loss-tag { font-size: 0.65em; padding: 2px 6px; border-radius: 4px; background: #444; color: #ccc; border: 1px solid #555; }
+
+        /* NUEVOS ESTILOS PARA CEREBRO Y LATENTE */
+        #visualizadores-avanzados {
+            grid-column: 1;
+            grid-row: 2;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            padding: 10px;
+            background: #1e1e1e;
+            height: 300px;
+        }
+        .canvas-container {
+            background: #020617;
+            border-radius: 8px;
+            border: 1px solid #444;
+            position: relative;
+            overflow: hidden;
+        }
+        .canvas-label {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            font-size: 0.6em;
+            font-weight: bold;
+            color: rgba(255,255,255,0.4);
+            text-transform: uppercase;
+            z-index: 5;
+        }
+        canvas { width: 100%; height: 100%; display: block; }
+    </style>
+</head>
+<body>
+    <div id="cy"></div>
+    <div id="metrics">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2>Estado del Sistema</h2>
+            <div id="modo-badge" style="padding: 4px 8px; border-radius: 12px; font-size: 0.7em; background: #444; color: #aaa;">CONECTANDO...</div>
+        </div>
+        <div class="stat-card">
+            <div>Densidad Topológica</div>
+            <div id="densidad" class="stat-value">--</div>
+        </div>
+        <div class="stat-card">
+            <div>Nodos Activos</div>
+            <div id="nodos" class="stat-value">--</div>
+        </div>
+        <div class="stat-card">
+            <div>Predicción Estabilidad (IA)</div>
+            <div id="prediccion" class="stat-value" style="color: #ce9178;">--</div>
+        </div>
+        <div class="stat-card" style="border: 2px solid #f85149;">
+            <div>🔮 Predicción Anomalía</div>
+            <div id="prediccion-anomalia" class="stat-value" style="color: #f85149;">--</div>
+        </div>
+
+        <!-- NUEVA CAPA: JERARQUÍA COGNITIVA (CAPAS 0-3) -->
+        <div class="stat-card" style="border: 2px solid #4fc1ff; margin-top: 20px; background: #1a202c;">
+            <div style="color: #4fc1ff; font-weight: bold; margin-bottom: 10px;">🧠 Jerarquía Cognitiva (Capas 0-3)</div>
+            
+            <!-- Capa 3: Decisión -->
+            <div id="cognicion-decision-box" style="padding: 10px; border-radius: 4px; background: #2d3748; margin-bottom: 10px;">
+                <div style="font-size: 0.7em; color: #a0aec0;">CAPA 3: DECISIÓN</div>
+                <div id="cognicion-tipo" style="font-size: 1.2em; font-weight: bold; color: #fff;">MONITOREO</div>
+                <div id="cognicion-desc" style="font-size: 0.8em; color: #cbd5e0; margin-top: 4px;">Sistema estable.</div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+                    <div>
+                        <div style="font-size: 0.6em; color: #a0aec0;">URGENCIA</div>
+                        <div id="cognicion-urgencia" style="font-size: 1em; color: #f56565;">0.00</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.6em; color: #a0aec0;">CONFIANZA</div>
+                        <div id="cognicion-confianza" style="font-size: 1em; color: #48bb78;">0.00</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Capa 2: Contexto -->
+            <div style="margin-bottom: 10px;">
+                <div style="font-size: 0.7em; color: #a0aec0;">CAPA 2: MODALIDAD DOMINANTE</div>
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
+                    <div id="modalidad-label" style="font-size: 0.9em; color: #9cdcfe;">Equilibrado</div>
+                    <div style="flex: 1; height: 8px; background: #444; border-radius: 4px; overflow: hidden; display: flex;">
+                        <div id="gate-lstm" style="width: 50%; background: #ed64a6; height: 100%;"></div>
+                        <div id="gate-trans" style="width: 50%; background: #4299e1; height: 100%;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Capa 1: Sensorial -->
+            <div>
+                <div style="font-size: 0.7em; color: #a0aec0;">CAPA 1: ESTADO DE ÁTOMOS (25)</div>
+                <div id="atomos-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 5px;">
+                    <!-- Se llenará dinámicamente -->
+                </div>
+            </div>
+        </div>
+
+        <!-- NUEVA CAPA: FÍSICA DE LA INFORMACIÓN -->
+        <div class="stat-card" style="border: 2px solid #ffcc00; margin-top: 20px;">
+            <div style="color: #ffcc00; font-weight: bold; margin-bottom: 10px;">🧬 Física de la Información (Wolfram)</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div>
+                    <div style="font-size: 0.7em; color: #aaa;">TENSIÓN</div>
+                    <div id="fisica-tension" style="font-size: 1.1em; color: #ffcc00;">0.0%</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.7em; color: #aaa;">CURVATURA</div>
+                    <div id="fisica-curvatura" style="font-size: 1.1em; color: #ffcc00;">0.00</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.7em; color: #aaa;">DIM. FRACTAL</div>
+                    <div id="fisica-fractal" style="font-size: 1.1em; color: #ffcc00;">1.000</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.7em; color: #aaa;">FATIGA</div>
+                    <div id="fisica-fatiga" style="font-size: 1.1em; color: #ffcc00;">0.0%</div>
+                </div>
+            </div>
+            
+            <!-- NUEVA SECCIÓN: PÉRDIDAS FÍSICAS OMEGA 21 -->
+            <div style="margin-top: 15px; border-top: 1px solid #444; padding-top: 10px;">
+                <div style="font-size: 0.7em; color: #aaa; margin-bottom: 5px;">PÉRDIDAS FÍSICAS (L_total)</div>
+                <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                    <div class="loss-tag" id="loss-energia">Energía: 0</div>
+                    <div class="loss-tag" id="loss-termo">Termo: 0</div>
+                    <div class="loss-tag" id="loss-causal">Causal: 0</div>
+                    <div class="loss-tag" id="loss-entropia">Entropía: 0</div>
+                </div>
+            </div>
+
+            <div id="fisica-diagnostico" style="margin-top: 10px; font-size: 0.8em; font-style: italic; color: #eee; border-top: 1px solid #444; padding-top: 5px;">
+                Esperando datos físicos...
+            </div>
+        </div>
+
+        <!-- NUEVA CAPA: MEMORIA COLECTIVA -->
+        <div class="stat-card" style="border: 2px solid #3fb950; margin-top: 20px;">
+            <div style="color: #3fb950; font-weight: bold; margin-bottom: 10px;">🌐 Memoria Colectiva (Infección)</div>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div style="font-size: 0.7em; color: #aaa;">FIRMAS COMPARTIDAS</div>
+                    <div id="memoria-size" style="font-size: 1.5em; color: #3fb950;">0</div>
+                </div>
+                <div id="memoria-status" style="font-size: 0.8em; color: #3fb950; background: rgba(63, 185, 80, 0.1); padding: 5px 10px; border-radius: 10px;">
+                    Sincronizado
+                </div>
+            </div>
+            <div id="memoria-log" style="margin-top: 10px; font-size: 0.7em; color: #888; height: 60px; overflow-y: auto; text-align: left; font-family: monospace; background: #0d1117; padding: 5px; border-radius: 5px;">
+                Esperando señales de otros átomos...
+            </div>
+        </div>
+
+        <h3>Ajustes Dendritas (Feedback)</h3>
+        <div id="dendritas-container"></div>
+    </div>
+    <div id="visualizadores-avanzados">
+        <div class="canvas-container">
+            <div class="canvas-label">Cerebro Wolfram (1024 Neuronas LIF)</div>
+            <canvas id="wolframCanvas"></canvas>
+        </div>
+        <div class="canvas-container">
+            <div class="canvas-label">Imagen Mental (Espacio Latente)</div>
+            <canvas id="latentCanvas"></canvas>
+        </div>
+    </div>
+
+    <div id="charts">
+        <div class="chart-container"><canvas id="lossChart"></canvas></div>
+        <div class="chart-container"><canvas id="stabilityChart"></canvas></div>
+    </div>
+
+    <script>
+        // --- MOTOR DE VISUALIZACIÓN AVANZADA (WOLFRAM BRAIN) ---
+        class WolframBrainEngine {
+            constructor(canvasId) {
+                this.canvas = document.getElementById(canvasId);
+                if (!this.canvas) return;
+                this.ctx = this.canvas.getContext('2d');
+                this.neurons = [];
+                this.init();
+            }
+            init() {
+                this.canvas.width = this.canvas.offsetWidth || 400;
+                this.canvas.height = this.canvas.offsetHeight || 300;
+                for(let i=0; i<1024; i++) {
+                    this.neurons.push({
+                        x: Math.random() * this.canvas.width,
+                        y: Math.random() * this.canvas.height,
+                        v: 0,
+                        spike: 0
+                    });
+                }
+            }
+            render(activations) {
+                if (!this.ctx) return;
+                this.ctx.fillStyle = 'rgba(2, 6, 23, 0.2)';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                for(let i=0; i<1024; i++) {
+                    const n = this.neurons[i];
+                    const act = activations ? activations[i] : 0;
+                    
+                    this.ctx.beginPath();
+                    this.ctx.arc(n.x, n.y, 1 + act * 3, 0, Math.PI * 2);
+                    this.ctx.fillStyle = act > 0.5 ? '#4fc1ff' : `rgba(79, 193, 255, ${0.1 + act})`;
+                    this.ctx.fill();
+                }
+            }
+        }
+
+        class LatentSpaceVisualizer {
+            constructor(canvasId) {
+                this.canvas = document.getElementById(canvasId);
+                if (!this.canvas) return;
+                this.ctx = this.canvas.getContext('2d');
+            }
+            render(coherencia) {
+                if (!this.ctx) return;
+                this.ctx.fillStyle = '#020617';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                if (!coherencia) return;
+
+                const centerX = this.canvas.width / 2;
+                const centerY = this.canvas.height / 2;
+                
+                this.ctx.strokeStyle = '#3fb950';
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.arc(centerX, centerY, 50 * coherencia.estabilidadGlobal, 0, Math.PI * 2);
+                this.ctx.stroke();
+
+                this.ctx.fillStyle = 'white';
+                this.ctx.font = '10px monospace';
+                this.ctx.fillText(`COHERENCIA: ${(coherencia.estabilidadGlobal * 100).toFixed(1)}%`, 10, 20);
+                this.ctx.fillText(`CONCEPTO: ${coherencia.idConcepto || 'PROCESANDO...'}`, 10, 35);
+            }
+        }
+
+        let brain, latent;
+        window.onload = () => {
+            brain = new WolframBrainEngine('wolframCanvas');
+            latent = new LatentSpaceVisualizer('latentCanvas');
+        };
+
+        // Inicializar Cytoscape
+        const cy = cytoscape({
+            container: document.getElementById('cy'),
+            style: [
+                { selector: 'node', style: { 'background-color': '#007acc', 'label': 'data(label)', 'color': '#fff', 'text-valign': 'center', 'text-halign': 'center', 'font-size': '10px' } },
+                { selector: 'node[tipo="HIPEREDGE"]', style: { 'background-color': '#d16969', 'shape': 'diamond', 'width': 20, 'height': 20 } },
+                { selector: 'node[tipo="SOMA"]', style: { 'background-color': '#ce9178', 'width': 40, 'height': 40 } },
+                { selector: 'node[tipo="DENDRITA"]', style: { 'background-color': '#4caf50' } },
+                { selector: 'edge', style: { 'width': 1, 'line-color': '#555', 'curve-style': 'bezier' } }
+            ]
+        });
+
+        // Inicializar Charts
+        const ctxLoss = document.getElementById('lossChart').getContext('2d');
+        const lossChart = new Chart(ctxLoss, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: 'Loss de Entrenamiento', data: [], borderColor: '#f44336', tension: 0.1 }] },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, grid: { color: '#444' } }, x: { grid: { color: '#444' } } }, plugins: { legend: { labels: { color: '#fff' } } } }
+        });
+
+        const ctxStab = document.getElementById('stabilityChart').getContext('2d');
+        const stabChart = new Chart(ctxStab, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: 'Estabilidad (Predicha vs Real)', data: [], borderColor: '#4fc1ff', tension: 0.1 }] },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { grid: { color: '#444' } }, x: { grid: { color: '#444' } } }, plugins: { legend: { labels: { color: '#fff' } } } }
+        });
+
+        let tick = 0;
+
+        async function update() {
+            try {
+                const res = await fetch('/api/estado');
+                const data = await res.json();
+                
+                if (data.status === 'esperando_datos') return;
+
+                // Actualizar Métricas
+                document.getElementById('densidad').innerText = data.metricas.densidad.toFixed(4);
+                document.getElementById('nodos').innerText = data.metricas.numNodos;
+                
+                // Actualizar Badge de Modo
+                const badge = document.getElementById('modo-badge');
+                if (data.fisica && data.fisica.origen) {
+                    badge.innerText = data.fisica.origen === 'LOCAL_ONNX' ? '🧠 MODO LOCAL (ONNX)' : '☁️ MODO COLAB';
+                    badge.style.background = data.fisica.origen === 'LOCAL_ONNX' ? '#007acc' : '#4caf50';
+                    badge.style.color = '#fff';
+                }
+
+                if (data.feedback) {
+                    document.getElementById('prediccion').innerText = data.feedback.prediccion_estabilidad.toFixed(4);
+                    
+                    // Actualizar predicción de anomalía
+                    if (data.feedback.prediccion_anomalia !== undefined) {
+                        const anomProb = data.feedback.prediccion_anomalia;
+                        const anomPercent = (anomProb * 100).toFixed(1);
+                        document.getElementById('prediccion-anomalia').innerText = anomPercent + '%';
+                        
+                        // Cambiar color según probabilidad
+                        const anomDiv = document.getElementById('prediccion-anomalia');
+                        if (anomProb > 0.7) {
+                            anomDiv.style.color = '#ff4444';
+                            anomDiv.style.fontWeight = 'bold';
+                        } else if (anomProb > 0.4) {
+                            anomDiv.style.color = '#ffaa44';
+                        } else {
+                            anomDiv.style.color = '#4caf50';
+                        }
+                    }
+                    
+                    // Actualizar Gráficos
+                    if (data.feedback.loss) {
+                        tick++;
+                        lossChart.data.labels.push(tick);
+                        lossChart.data.datasets[0].data.push(data.feedback.loss);
+                        if (lossChart.data.labels.length > 50) {
+                            lossChart.data.labels.shift();
+                            lossChart.data.datasets[0].data.shift();
+                        }
+                        lossChart.update();
+                    }
+
+                    // Barras de Dendritas
+                    const container = document.getElementById('dendritas-container');
+                    container.innerHTML = '';
+                    data.feedback.ajustes_dendritas.forEach((val, idx) => {
+                        const div = document.createElement('div');
+                        div.style.display = 'flex';
+                        div.style.alignItems = 'center';
+                        div.style.fontSize = '10px';
+                        div.innerHTML = `<span style="width:20px">D${idx}</span>
+                            <div style="flex:1; background:#333; height:10px; margin:0 5px;">
+                                <div style="width:${(val + 1) * 50}%; background:${val > 0 ? '#4caf50' : '#f44336'}; height:100%"></div>
+                            </div>
+                            <span>${val.toFixed(2)}</span>`;
+                        container.appendChild(div);
+                    });
+                }
+
+                // Actualizar Física de la Información
+                if (data.fisica) {
+                    const f = data.fisica.metricas;
+                    document.getElementById('fisica-tension').innerText = f.tension.toFixed(1) + '%';
+                    document.getElementById('fisica-curvatura').innerText = f.curvatura.toFixed(2);
+                    document.getElementById('fisica-fractal').innerText = f.dimensionFractal.toFixed(3);
+                    document.getElementById('fisica-fatiga').innerText = f.fatiga.toFixed(1) + '%';
+                    document.getElementById('fisica-diagnostico').innerText = data.fisica.diagnostico;
+
+                    // Actualizar Physics Loss Tags
+                    if (f.physicsLoss) {
+                        const pl = f.physicsLoss;
+                        const updateLoss = (id, val, threshold) => {
+                            const el = document.getElementById(id);
+                            el.innerText = `${id.split('-')[1].toUpperCase()}: ${val.toFixed(0)}`;
+                            el.style.borderColor = val > threshold ? '#f85149' : '#555';
+                            el.style.color = val > threshold ? '#f85149' : '#ccc';
+                        };
+                        updateLoss('loss-energia', pl.energia, 1000);
+                        updateLoss('loss-termo', pl.termo, 0);
+                        updateLoss('loss-causal', pl.causal, 0);
+                        updateLoss('loss-entropia', pl.entropia, 5000);
+                    }
+                }
+
+                // Actualizar Memoria Colectiva
+                if (data.memoria !== undefined) {
+                    const memSize = document.getElementById('memoria-size');
+                    if (memSize) {
+                        const oldSize = parseInt(memSize.innerText) || 0;
+                        memSize.innerText = data.memoria;
+                        if (data.memoria > oldSize) {
+                            const log = document.getElementById('memoria-log');
+                            const entry = document.createElement('div');
+                            entry.style.color = '#3fb950';
+                            entry.innerText = `[${new Date().toLocaleTimeString()}] Nueva firma integrada: INFECCIÓN EXITOSA`;
+                            log.prepend(entry);
+                        }
+                    }
+                }
+
+                // ACTUALIZAR VISUALIZADORES AVANZADOS
+                if (brain && data.neuronal && data.neuronal.ajustes_dendritas) {
+                    brain.render(data.neuronal.ajustes_dendritas);
+                }
+                if (latent && data.coherencia) {
+                    latent.render(data.coherencia);
+                }
+
+                // Actualizar Grafo (solo si cambió mucho para no congelar)
+                // Estrategia simple: recargar todo
+                if (data.grafo && data.grafo.nodes.length > 0) {
+                    cy.elements().remove();
+                    cy.add(data.grafo.nodes);
+                    cy.add(data.grafo.edges);
+                    cy.layout({ name: 'cose', animate: false }).run();
+                }
+
+                // ACTUALIZAR JERARQUÍA COGNITIVA
+                if (data.cognicion) {
+                    const cog = data.cognicion;
+                    
+                    // Capa 3
+                    const tipoEl = document.getElementById('cognicion-tipo');
+                    tipoEl.innerText = cog.decision.tipo;
+                    document.getElementById('cognicion-desc').innerText = cog.decision.descripcion;
+                    document.getElementById('cognicion-urgencia').innerText = cog.decision.nivelUrgencia.toFixed(2);
+                    document.getElementById('cognicion-confianza').innerText = cog.decision.confianzaDecision.toFixed(2);
+                    
+                    // Color según tipo
+                    const box = document.getElementById('cognicion-decision-box');
+                    if (cog.decision.tipo.includes('ALERTA')) box.style.background = '#742a2a';
+                    else if (cog.decision.tipo === 'INTERVENCION') box.style.background = '#9b2c2c';
+                    else if (cog.decision.tipo === 'APRENDIZAJE') box.style.background = '#2c5282';
+                    else box.style.background = '#2d3748';
+
+                    // Capa 2
+                    document.getElementById('modalidad-label').innerText = cog.contexto.modalidadDominante;
+                    const gateLstm = document.getElementById('gate-lstm');
+                    const gateTrans = document.getElementById('gate-trans');
+                    // Asumimos que tenemos acceso a los pesos de las puertas si los enviamos
+                    // Por ahora simulamos con la modalidad dominante
+                    if (cog.contexto.modalidadDominante === 'temporal') {
+                        gateLstm.style.width = '80%'; gateTrans.style.width = '20%';
+                    } else if (cog.contexto.modalidadDominante === 'espacial') {
+                        gateLstm.style.width = '20%'; gateTrans.style.width = '80%';
+                    } else {
+                        gateLstm.style.width = '50%'; gateTrans.style.width = '50%';
+                    }
+
+                    // Capa 1: Átomos
+                    const grid = document.getElementById('atomos-grid');
+                    grid.innerHTML = '';
+                    Object.entries(cog.sensorial).forEach(([id, latente]) => {
+                        const dot = document.createElement('div');
+                        dot.style.height = '12px';
+                        dot.style.borderRadius = '2px';
+                        // Intensidad basada en el promedio del vector latente
+                        const avg = latente.reduce((a,b) => a+b, 0) / latente.length;
+                        dot.style.background = `rgba(79, 193, 255, ${0.2 + avg * 0.8})`;
+                        dot.title = `${id}: ${avg.toFixed(2)}`;
+                        grid.appendChild(dot);
+                    });
+                }
+
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        setInterval(update, 2000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+export { MapeoRedNeuronalAHipergrafo } from './MapeoRedNeuronalAHipergrafo';
+export { ColabBridge } from './ColabBridge';
+export { InferenciaLocal } from './InferenciaLocal';
+export { CortezaCognitiva } from './CortezaCognitiva';
+export { CapaEntrada, CapaSensorial, ProcesadorSensorial } from './CapaSensorial';
+export { CapaEspacioTemporal } from './CapaEspacioTemporalV2';
+export { CapaCognitiva } from './CapaCognitivaV2';
+export { GatedMultimodalUnit, MultiHeadGMU, FusionHibrida } from './FusionMultimodal';
+export { IntegradorHipergrafoColo } from './IntegradorHipergrafoColo';
+export { CONFIG_COLAB, actualizarUrlColab } from './configColab';
+export { CONFIGURACION_MAPEO_DEFAULT } from './tipos';
+export type { RedNeuronal, Neurona, ConfiguracionMapeo } from './tipos';

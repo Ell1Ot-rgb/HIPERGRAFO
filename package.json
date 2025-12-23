@@ -1,0 +1,48 @@
+{
+  "name": "hipergrafo",
+  "version": "0.1.0",
+  "description": "Sistema de mapeo de redes hipergráficas con rigor teórico para generar hipergrafos persistentes a partir de redes neuronales",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src --ext .ts",
+    "run_simulacion": "npx ts-node src/run_simulacion.ts",
+    "run_entrenamiento": "npx ts-node src/run_entrenamiento.ts",
+    "run_estres": "npx ts-node src/run_estres.ts",
+    "run_omnisciente": "npx ts-node src/run_omnisciente.ts",
+    "simular_cognicion": "npx ts-node src/simular_cognicion.ts",
+    "enviar_dataset": "npx ts-node src/enviar_dataset.ts"
+  },
+  "keywords": [
+    "hipergrafo",
+    "hypergraph",
+    "red-neuronal",
+    "neural-network",
+    "persistencia",
+    "graph-theory"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^10.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@types/express": "^5.0.6",
+    "axios": "^1.13.2",
+    "express": "^5.2.1",
+    "onnxruntime-node": "^1.23.2",
+    "uuid": "^9.0.0"
+  }
+}
