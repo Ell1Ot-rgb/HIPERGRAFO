@@ -5,6 +5,7 @@ import { ProcesadorSensorial, Vector256D } from './neural/CapaSensorial';
 import { AnalizadorFisico } from './analisis';
 import { MapeoOmegaAHipergrafo, Omega21Telemetry } from './omega21';
 import { StreamingBridge } from './neural/StreamingBridge';
+import { HipergrafoBridge } from './neural/HipergrafoBridge';
 import { Omega21Simulador } from './hardware/Simulador';
 
 /**
@@ -117,6 +118,7 @@ export class SistemaOmnisciente {
     public capa2: CapaEspacioTemporal = new CapaEspacioTemporal();
     public capa3: CapaCognitiva = new CapaCognitiva();
     private bridge: StreamingBridge | null = null;
+    private hipergrafoBridge: HipergrafoBridge = new HipergrafoBridge();
     private inicializado: boolean = false;
 
     async inicializar() {
@@ -133,6 +135,12 @@ export class SistemaOmnisciente {
      */
     conectarColab(url: string) {
         this.bridge = new StreamingBridge(url);
+        
+        // Registrar callback para procesar feedback de Colab
+        this.bridge.registrarCallbackFeedback((decision) => {
+            this.procesarRespuestaColab(decision);
+        });
+        
         console.log(`🔗 Sistema Omnisciente: Conectado a Colab Bridge en ${url}`);
     }
 
@@ -261,6 +269,29 @@ export class SistemaOmnisciente {
                 imagenMental: imagenMental // El hipergrafo resultante
             }
         };
+    }
+
+    /**
+     * Procesa respuesta de Colab con feedback dinámico
+     */
+    private procesarRespuestaColab(decision: any): void {
+        // Obtener el primer átomo para aplicar feedback (en futuro, distribuir entre todos)
+        const atomos = Array.from(this.atomos.values());
+        if (atomos.length === 0) return;
+        
+        const atomo = atomos[0];
+        
+        // Procesar decisión a través del HipergrafoBridge
+        this.hipergrafoBridge.procesarDecision(decision, atomo);
+        
+        console.log(`📊 [HipergrafoBridge] Decisión procesada: anomaly=${decision.anomaly_prob?.toFixed(2)}, dendrites=${decision.dendrite_adjustments?.length ?? 0}D, coherence=${decision.coherence_state?.length ?? 0}D`);
+    }
+
+    /**
+     * Obtiene reporte de estadísticas del Hipergrafo
+     */
+    obtenerReporteHipergrafoBridge() {
+        return this.hipergrafoBridge.generarReporte();
     }
 
     /**

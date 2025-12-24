@@ -9,6 +9,7 @@
  */
 
 import axios from 'axios';
+import { DecisionColab } from './HipergrafoBridge';
 
 export interface MuestraEntrenamiento {
     input_data: number[];
@@ -24,9 +25,17 @@ export class StreamingBridge {
     private buffer: MuestraEntrenamiento[] = [];
     private readonly TAMANO_BATCH = 64;
     private enviando: boolean = false;
+    private feedbackCallback?: (decision: DecisionColab) => void;
 
     constructor(urlColab: string) {
         this.urlColab = urlColab.replace(/\/$/, "");
+    }
+
+    /**
+     * Registra callback para procesar feedback de Colab
+     */
+    public registrarCallbackFeedback(callback: (decision: DecisionColab) => void): void {
+        this.feedbackCallback = callback;
     }
 
     /**
@@ -61,7 +70,7 @@ export class StreamingBridge {
             try {
                 // Enviar a Colab usando el endpoint correcto /train_layer2
                 const inicio = Date.now();
-                await axios.post(`${this.urlColab}/train_layer2`, lote, {
+                const respuesta = await axios.post(`${this.urlColab}/train_layer2`, lote, {
                     headers: { 
                         'Content-Type': 'application/json',
                         'ngrok-skip-browser-warning': 'true'
@@ -71,6 +80,21 @@ export class StreamingBridge {
                 
                 const latencia = Date.now() - inicio;
                 console.log(`🚀 Lote de ${this.TAMANO_BATCH} muestras enviado. Latencia: ${latencia}ms. Restantes: ${this.buffer.length}`);
+                
+                // Procesar feedback de Colab
+                if (respuesta.data && this.feedbackCallback) {
+                    const decision: DecisionColab = {
+                        anomaly_prob: respuesta.data.anomaly_prob ?? 0,
+                        dendrite_adjustments: respuesta.data.dendrite_adjustments ?? [],
+                        coherence_state: respuesta.data.coherence_state ?? [],
+                        timestamp: respuesta.data.timestamp ?? new Date().toISOString(),
+                        batch_size: samples.length,
+                        loss: respuesta.data.loss,
+                    };
+                    
+                    // Invocar callback con decisión
+                    this.feedbackCallback(decision);
+                }
             } catch (error: any) {
                 console.error(`❌ Error enviando lote a Colab: ${error.message}`);
                 // Devolver las muestras al inicio del buffer para reintentar
