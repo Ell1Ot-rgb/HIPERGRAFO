@@ -25,6 +25,481 @@ export interface SalidaCapa1 {
 }
 
 /**
+ * Normalizador Adaptativo con Running Statistics
+ * Aprende distribuciones en tiempo real
+ */
+class AdaptiveNormalizer {
+    private estadisticas: Map<string, { μ: number; σ: number; count: number }> = new Map();
+    private momentum: number = 0.95;
+    private epsilon: number = 1e-7;
+
+    actualizar(campo: string, valores: number[]): void {
+        if (valores.length === 0) return;
+        
+        const μ_batch = valores.reduce((a, b) => a + b, 0) / valores.length;
+        const σ_batch = Math.sqrt(
+            valores.reduce((sum, v) => sum + Math.pow(v - μ_batch, 2), 0) / valores.length
+        );
+
+        const stats = this.estadisticas.get(campo) || { μ: 0, σ: 1, count: 0 };
+        
+        // Exponential Moving Average
+        stats.μ = this.momentum * stats.μ + (1 - this.momentum) * μ_batch;
+        stats.σ = this.momentum * stats.σ + (1 - this.momentum) * Math.max(σ_batch, this.epsilon);
+        stats.count++;
+        
+        this.estadisticas.set(campo, stats);
+    }
+
+    normalizar(campo: string, valor: number): number {
+        const stats = this.estadisticas.get(campo) || { μ: 0, σ: 1, count: 0 };
+        return (valor - stats.μ) / (stats.σ + this.epsilon);
+    }
+
+    obtenerEstadisticas(campo: string) {
+        return this.estadisticas.get(campo) || { μ: 0, σ: 1, count: 0 };
+    }
+}
+
+/**
+ * Generador de Positional Encoding Sinusoidal
+ * Inspurado en Transformers: PE(pos, 2i) = sin(pos/10000^(2i/d))
+ */
+class PositionalEncoder {
+    private cache: Map<number, number[]> = new Map();
+
+    generar(posicion: number, dimension: number): number[] {
+        const cacheKey = posicion * 1000 + dimension;
+        if (this.cache.has(cacheKey)) {
+            return this.cache.get(cacheKey)!;
+        }
+
+        const encoding: number[] = [];
+        const logDiv = Math.log(10000) / Math.max(1, dimension - 1);
+
+        for (let i = 0; i < dimension; i++) {
+            const angle = posicion / Math.exp((i / dimension) * logDiv);
+            if (i % 2 === 0) {
+                encoding.push(Math.sin(angle));
+            } else {
+                encoding.push(Math.cos(angle));
+            }
+        }
+
+        this.cache.set(cacheKey, encoding);
+        return encoding;
+    }
+
+    limpiarCache() {
+        if (this.cache.size > 1000) {
+            // Evitar memory leak: limpiar si crece demasiado
+            this.cache.clear();
+        }
+    }
+}
+
+/**
+ * Inter-Subespacio Attention
+ * Permite que los 25 subespacios se "escuchen" mutuamente
+ * Calcula pesos de atención basados en magnitud de activación
+ */
+class InterSubespacioAttention {
+    private pesos: Map<string, number> = new Map();
+    private historico: Map<string, number[]> = new Map();
+    private readonly WINDOW_SIZE = 10;
+
+    /**
+     * Calcula pesos de atención entre subespacios
+     * Basado en la magnitud de activación de cada uno
+     */
+    calcularPesos(salidas: SalidaCapa1): Map<string, number> {
+        let totalMag = 0;
+        const magnitudes = new Map<string, number>();
+
+        // 1. Calcular magnitud de cada subespacio
+        Object.entries(salidas).forEach(([id, vector]) => {
+            const mag = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0));
+            magnitudes.set(id, mag);
+            totalMag += mag;
+
+            // Actualizar histórico
+            if (!this.historico.has(id)) {
+                this.historico.set(id, []);
+            }
+            const hist = this.historico.get(id)!;
+            hist.push(mag);
+            if (hist.length > this.WINDOW_SIZE) {
+                hist.shift();
+            }
+        });
+
+        // 2. Normalizar a probabilidades (suma = 1)
+        magnitudes.forEach((mag, id) => {
+            this.pesos.set(id, totalMag > 0 ? mag / totalMag : 1.0 / magnitudes.size);
+        });
+
+        return this.pesos;
+    }
+
+    /**
+     * Aplica pesos de atención a las salidas
+     * Los subespacios con mayor activación influyen más en los demás
+     */
+    aplicarAtencion(salidas: SalidaCapa1): SalidaCapa1 {
+        const pesos = this.calcularPesos(salidas);
+        const resultado: SalidaCapa1 = {};
+
+        // Para cada subespacio, mezclar sutilmente con otros
+        Object.entries(salidas).forEach(([id, vector]) => {
+            const vectorPonderado = [...vector];
+            const pesoPropio = pesos.get(id) || 0;
+
+            // Mezclar con otros subespacios (peso bajo: 5%)
+            Object.entries(salidas).forEach(([otherId, otherVector]) => {
+                if (otherId !== id) {
+                    const pesoOtro = pesos.get(otherId) || 0;
+                    const factorInfluencia = pesoOtro * 0.05; // 5% de influencia
+
+                    for (let i = 0; i < vectorPonderado.length; i++) {
+                        vectorPonderado[i] += otherVector[i] * factorInfluencia;
+                    }
+                }
+            });
+
+            resultado[id] = vectorPonderado;
+        });
+
+        return resultado;
+    }
+
+    /**
+     * Obtiene estadísticas de atención
+     */
+    obtenerEstadisticas(): { subespaciosDominantes: string[]; diversidadAtencion: number } {
+        const pesosArray = Array.from(this.pesos.entries())
+            .sort((a, b) => b[1] - a[1]);
+
+        const top3 = pesosArray.slice(0, 3).map(([id]) => id);
+        
+        // Diversidad: entropía de Shannon
+        let entropia = 0;
+        this.pesos.forEach(p => {
+            if (p > 0) {
+                entropia -= p * Math.log2(p);
+            }
+        });
+
+        return {
+            subespaciosDominantes: top3,
+            diversidadAtencion: entropia / Math.log2(this.pesos.size) // Normalizado [0,1]
+        };
+    }
+}
+
+/**
+ * Entropy-Based Field Analyzer
+ * Analiza la entropía de cada campo para detectar campos "muertos" o altamente predictivos
+ */
+class EntropyFieldAnalyzer {
+    private entropias: Map<string, number> = new Map();
+    private histogramas: Map<string, Map<number, number>> = new Map();
+    private readonly BINS = 50; // Número de bins para histograma
+    private readonly WINDOW_SIZE = 100; // Ventana de análisis
+
+    /**
+     * Analiza un campo y calcula su entropía de Shannon
+     */
+    analizarCampo(campo: string, valor: number): void {
+        if (!this.histogramas.has(campo)) {
+            this.histogramas.set(campo, new Map());
+        }
+
+        const hist = this.histogramas.get(campo)!;
+        const bin = Math.floor(valor * this.BINS);
+        hist.set(bin, (hist.get(bin) || 0) + 1);
+
+        // Calcular entropía si tenemos suficientes muestras
+        const totalMuestras = Array.from(hist.values()).reduce((a, b) => a + b, 0);
+        if (totalMuestras >= this.WINDOW_SIZE) {
+            let entropia = 0;
+            hist.forEach(count => {
+                const p = count / totalMuestras;
+                if (p > 0) {
+                    entropia -= p * Math.log2(p);
+                }
+            });
+            this.entropias.set(campo, entropia);
+
+            // Limpiar histograma si crece demasiado
+            if (totalMuestras > this.WINDOW_SIZE * 2) {
+                this.histogramas.set(campo, new Map());
+            }
+        }
+    }
+
+    /**
+     * Obtiene la entropía de un campo
+     * 0 = campo muerto (sin variación)
+     * >0 = campo con información
+     * Alto = alta variabilidad/información
+     */
+    obtenerEntropia(campo: string): number {
+        return this.entropias.get(campo) || 0;
+    }
+
+    /**
+     * Identifica campos con baja entropía (candidatos a eliminar)
+     */
+    identificarCamposMuertos(umbral: number = 0.5): string[] {
+        const muertos: string[] = [];
+        this.entropias.forEach((entropia, campo) => {
+            if (entropia < umbral) {
+                muertos.push(campo);
+            }
+        });
+        return muertos;
+    }
+
+    /**
+     * Identifica campos con alta entropía (muy informativos)
+     */
+    identificarCamposInformativos(umbral: number = 3.0): string[] {
+        const informativos: string[] = [];
+        this.entropias.forEach((entropia, campo) => {
+            if (entropia > umbral) {
+                informativos.push(campo);
+            }
+        });
+        return informativos;
+    }
+
+    /**
+     * Obtiene estadísticas generales
+     */
+    obtenerEstadisticas(): {
+        camposAnalizados: number;
+        entropiaMedia: number;
+        entropiaMin: number;
+        entropiaMax: number;
+        camposMuertos: number;
+        camposInformativos: number;
+    } {
+        const entropiasArray = Array.from(this.entropias.values());
+        return {
+            camposAnalizados: this.entropias.size,
+            entropiaMedia: entropiasArray.reduce((a, b) => a + b, 0) / entropiasArray.length || 0,
+            entropiaMin: Math.min(...entropiasArray) || 0,
+            entropiaMax: Math.max(...entropiasArray) || 0,
+            camposMuertos: this.identificarCamposMuertos().length,
+            camposInformativos: this.identificarCamposInformativos().length
+        };
+    }
+}
+
+/**
+ * Entropy-Based Field Analyzer
+ * Analiza la entropía de Shannon de cada campo para identificar:
+ * - Campos "muertos" (entropía ~0): siempre mismo valor
+ * - Campos informativos (entropía alta): mucha variabilidad
+ * - Campos predictivos (entropía media): patrones útiles
+ */
+class EntropyFieldAnalyzer {
+    private entropias: Map<string, number> = new Map();
+    private historial: Map<string, number[][]> = new Map();
+    private readonly WINDOW_SIZE = 100;
+    private readonly NUM_BINS = 50;
+
+    /**
+     * Analiza la entropía de Shannon de un campo
+     * H = -Σ p(x) * log₂(p(x))
+     */
+    analizarCampo(campo: string, valores: number[]): number {
+        if (valores.length === 0) return 0;
+
+        // 1. Crear histograma (binning)
+        const bins = new Map<number, number>();
+        valores.forEach(v => {
+            const bin = Math.floor(v * this.NUM_BINS) / this.NUM_BINS;
+            bins.set(bin, (bins.get(bin) || 0) + 1);
+        });
+
+        // 2. Calcular probabilidades
+        const n = valores.length;
+        let entropy = 0;
+        bins.forEach(count => {
+            const p = count / n;
+            if (p > 0) {
+                entropy -= p * Math.log2(p);
+            }
+        });
+
+        // 3. Normalizar a [0, 1] (entropía máxima = log₂(num_bins))
+        const maxEntropy = Math.log2(Math.min(this.NUM_BINS, n));
+        const entropyNorm = maxEntropy > 0 ? entropy / maxEntropy : 0;
+
+        // 4. Actualizar historial
+        if (!this.historial.has(campo)) {
+            this.historial.set(campo, []);
+        }
+        const hist = this.historial.get(campo)!;
+        hist.push([Date.now(), entropyNorm]);
+        if (hist.length > this.WINDOW_SIZE) {
+            hist.shift();
+        }
+
+        this.entropias.set(campo, entropyNorm);
+        return entropyNorm;
+    }
+
+    /**
+     * Clasifica un campo según su entropía
+     */
+    clasificarCampo(campo: string): 'dead' | 'low' | 'medium' | 'high' | 'random' {
+        const entropy = this.entropias.get(campo) || 0;
+
+        if (entropy < 0.05) return 'dead';       // Casi constante
+        if (entropy < 0.3) return 'low';         // Poca variabilidad
+        if (entropy < 0.6) return 'medium';      // Variabilidad moderada (útil)
+        if (entropy < 0.9) return 'high';        // Alta variabilidad (muy útil)
+        return 'random';                          // Ruido aleatorio puro
+    }
+
+    /**
+     * Obtiene estadísticas de todos los campos analizados
+     */
+    obtenerEstadisticas(): {
+        camposMuertos: string[];
+        camposInformativos: string[];
+        entropiaPromedio: number;
+        distribucion: { dead: number; low: number; medium: number; high: number; random: number };
+    } {
+        const muertos: string[] = [];
+        const informativos: string[] = [];
+        const dist = { dead: 0, low: 0, medium: 0, high: 0, random: 0 };
+
+        let sumaEntropy = 0;
+        this.entropias.forEach((entropy, campo) => {
+            const clase = this.clasificarCampo(campo);
+            dist[clase]++;
+
+            if (clase === 'dead') {
+                muertos.push(campo);
+            } else if (clase === 'medium' || clase === 'high') {
+                informativos.push(campo);
+            }
+
+            sumaEntropy += entropy;
+        });
+
+        return {
+            camposMuertos: muertos,
+            camposInformativos: informativos,
+            entropiaPromedio: this.entropias.size > 0 ? sumaEntropy / this.entropias.size : 0,
+            distribucion: dist
+        };
+    }
+
+    /**
+     * Recomienda campos a descartar (dead/random)
+     */
+    recomendarDescarte(): string[] {
+        const descartar: string[] = [];
+        this.entropias.forEach((entropy, campo) => {
+            const clase = this.clasificarCampo(campo);
+            if (clase === 'dead' || clase === 'random') {
+                descartar.push(campo);
+            }
+        });
+        return descartar;
+    }
+}
+
+/**
+ * Learnable Subespacio Weights
+ * Aprende importancia relativa de cada subespacio durante training
+ */
+class LearnableSubespacioWeights {
+    private pesos: Map<string, number> = new Map();
+    private gradientes: Map<string, number> = new Map();
+    private momentum: Map<string, number> = new Map();
+    private readonly LEARNING_RATE = 0.001;
+    private readonly MOMENTUM_FACTOR = 0.9;
+
+    constructor(subespaciosIds: string[]) {
+        // Inicializar todos los pesos a 1.0
+        subespaciosIds.forEach(id => {
+            this.pesos.set(id, 1.0);
+            this.gradientes.set(id, 0);
+            this.momentum.set(id, 0);
+        });
+    }
+
+    /**
+     * Actualiza pesos basado en performance
+     * Performance alto → aumentar peso
+     * Performance bajo → disminuir peso
+     */
+    actualizar(performance: Map<string, number>): void {
+        performance.forEach((perf, id) => {
+            const pesoActual = this.pesos.get(id) || 1.0;
+            const gradActual = this.gradientes.get(id) || 0;
+            const momentumActual = this.momentum.get(id) || 0;
+
+            // Calcular gradiente: si perf > 0.5 → aumentar, si perf < 0.5 → disminuir
+            const gradiente = (perf - 0.5) * 2; // [-1, 1]
+
+            // Actualizar momentum
+            const nuevoMomentum = this.MOMENTUM_FACTOR * momentumActual + 
+                                  (1 - this.MOMENTUM_FACTOR) * gradiente;
+            this.momentum.set(id, nuevoMomentum);
+
+            // Actualizar peso
+            const nuevoPeso = pesoActual + this.LEARNING_RATE * nuevoMomentum;
+            
+            // Clamp a [0.1, 10.0] para evitar valores extremos
+            this.pesos.set(id, Math.max(0.1, Math.min(10.0, nuevoPeso)));
+            this.gradientes.set(id, gradiente);
+        });
+    }
+
+    /**
+     * Aplica pesos a las salidas de Capa 1
+     */
+    aplicar(salidas: SalidaCapa1): SalidaCapa1 {
+        const resultado: SalidaCapa1 = {};
+
+        Object.entries(salidas).forEach(([id, vector]) => {
+            const peso = this.pesos.get(id) || 1.0;
+            resultado[id] = vector.map(v => v * peso);
+        });
+
+        return resultado;
+    }
+
+    /**
+     * Obtiene estadísticas de pesos
+     */
+    obtenerEstadisticas(): { pesosMin: number; pesosMax: number; pesosMedio: number; subespaciosMasFuertes: string[] } {
+        const pesosArray = Array.from(this.pesos.values());
+        const pesosMin = Math.min(...pesosArray);
+        const pesosMax = Math.max(...pesosArray);
+        const pesosMedio = pesosArray.reduce((a, b) => a + b, 0) / pesosArray.length;
+
+        const top5 = Array.from(this.pesos.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([id]) => id);
+
+        return {
+            pesosMin,
+            pesosMax,
+            pesosMedio,
+            subespaciosMasFuertes: top5
+        };
+    }
+}
+
+/**
  * CAPA 0: Entrada - Preprocesamiento del Vector 256D
  */
 export class CapaEntrada {
@@ -55,14 +530,25 @@ export class CapaEntrada {
         { id: 'S24', rango: [233, 240], dimensiones: 8, descripcion: 'Plasticidad' },
         { id: 'S25', rango: [241, 256], dimensiones: 16, descripcion: 'Membrana y Reservoir' }
     ];
+    private normalizador: AdaptiveNormalizer = new AdaptiveNormalizer();
+    private posEncoderCapa0: PositionalEncoder = new PositionalEncoder();
+    private entropyAnalyzer: EntropyFieldAnalyzer = new EntropyFieldAnalyzer();
+    private batchValoresParaEntropy: Map<string, number[]> = new Map();
+    private contadorBatches: number = 0;
+    private readonly ANALIZAR_CADA_N_BATCHES = 50; // Analizar entropía cada 50 vectores
+    private entropyAnalyzer: EntropyFieldAnalyzer = new EntropyFieldAnalyzer();
 
     /**
-     * Preprocesa el vector 256D y lo divide en subespacios.
+     * Preprocesa el vector 256D y lo divide en subespacios
+     * FASE 2: Ahora incluye Positional Encoding en cada campo
+     * FASE 3: Recolecta datos para análisis de entropía
+     * 
      * @param vector256d Vector completo de entrada
-     * @returns Mapa de subespacios con sus valores
+     * @returns Mapa de subespacios con sus valores (con PE)
      */
     procesar(vector256d: Vector256D): Map<string, number[]> {
         const resultado = new Map<string, number[]>();
+        this.contadorBatches++;
 
         for (const subespacio of this.subespacios) {
             const valores: number[] = [];
@@ -72,45 +558,188 @@ export class CapaEntrada {
                 if (valor === undefined) {
                     throw new Error(`Campo ${clave} no encontrado en vector 256D`);
                 }
-                valores.push(this.normalizarCampo(clave, valor));
+                
+                // FASE 3: Recolectar valores para análisis de entropía
+                if (!this.batchValoresParaEntropy.has(clave)) {
+                    this.batchValoresParaEntropy.set(clave, []);
+                }
+                this.batchValoresParaEntropy.get(clave)!.push(valor);
+                
+                // Normalizar valor
+                let valorNormalizado = this.normalizarCampo(clave, valor);
+                
+                // FASE 2: Agregar Positional Encoding (peso muy bajo: 2%)
+                const posicion = i - 1; // 0-indexed
+                const pe = this.posEncoderCapa0.generar(posicion, 1)[0]; // Solo 1D
+                valorNormalizado += pe * 0.02; // 2% de influencia
+                
+                valores.push(valorNormalizado);
             }
             resultado.set(subespacio.id, valores);
+        }
+
+        // FASE 3: Analizar entropía cada N batches
+        if (this.contadorBatches % this.ANALIZAR_CADA_N_BATCHES === 0) {
+            this.analizarEntropiaGlobal();
         }
 
         return resultado;
     }
 
     /**
-     * Normalización específica por tipo de campo.
+     * FASE 3: Analiza la entropía de todos los campos acumulados
+     */
+    private analizarEntropiaGlobal(): void {
+        this.batchValoresParaEntropy.forEach((valores, campo) => {
+            if (valores.length > 10) { // Mínimo 10 muestras
+                this.entropyAnalyzer.analizarCampo(campo, valores);
+            }
+        });
+
+        // Limpiar buffer para próximo análisis
+        this.batchValoresParaEntropy.clear();
+    }
+
+    /**
+     * FASE 3: Obtiene estadísticas de entropía de campos
+     */
+    obtenerAnalisisEntropy() {
+        return this.entropyAnalyzer.obtenerEstadisticas();
+    }
+
+    /**
+     * Normalización adaptativa e inteligente por tipo de campo
+     * Combina múltiples técnicas: running stats, log-scaling, adaptive clipping
+     * 
      * @param campo Nombre del campo (D001, etc.)
      * @param valor Valor crudo
-     * @returns Valor normalizado [0,1] o [-1,1]
+     * @returns Valor normalizado [-1,1] o [0,1]
      */
     private normalizarCampo(campo: string, valor: number): number {
-        // Implementar normalización específica según el tipo de dato
-        // Para uint32/64: log scaling
-        // Para int16: tanh
-        // Para uint8: min-max
-
         const campoNum = parseInt(campo.substring(1));
-
-        // Campos uint32 (alta magnitud): log scaling
-        if ([1, 2, 3, 4, 5, 9, 10, 11, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208].includes(campoNum)) {
-            return Math.log1p(Math.max(0, valor)) / Math.log1p(1e9); // Asumiendo max ~1e9
+        
+        // PASO 1: Categorizar tipo de campo
+        const tipo = this.categorizarCampo(campoNum);
+        
+        // PASO 2: Pre-normalización según tipo
+        let normalizado: number;
+        
+        switch (tipo) {
+            case 'criptografico':
+                // Alta magnitud: log-scaling + adaptive norm
+                normalizado = this.normalizarAltaMagnitud(campo, valor);
+                break;
+            
+            case 'temporal':
+                // Preservar simetría: sin scaling
+                normalizado = this.normalizarTemporal(campo, valor);
+                break;
+            
+            case 'bipolar':
+                // Emociones/Potenciales: tanh con scaling
+                normalizado = this.normalizarBipolar(campo, valor);
+                break;
+            
+            case 'binario':
+                // Flags/Índices: min-max puro [0,1]
+                normalizado = this.normalizarBinario(valor);
+                break;
+            
+            default:
+                // Métricas genéricas: min-max adaptativo
+                normalizado = this.normalizarMetrica(campo, valor);
         }
+        
+        // PASO 3: Clip y asegurar rango
+        return Math.max(-1.0, Math.min(1.0, normalizado));
+    }
 
-        // Campos int16 (potenciales, emociones): tanh para [-1,1]
-        if ([89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 133, 134, 135, 136, 137, 138, 139, 140, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256].includes(campoNum)) {
-            return Math.tanh(valor / 1000); // Asumiendo rango ~[-1000,1000]
+    private categorizarCampo(campoNum: number): string {
+        // Criptografía (S1)
+        if (campoNum >= 1 && campoNum <= 16) return 'criptografico';
+        
+        // Temporal (S10)
+        if (campoNum >= 117 && campoNum <= 124) return 'temporal';
+        
+        // Emocional (S12) + Dinámica de Spikes (S23) + Plasticidad (S24)
+        if ((campoNum >= 133 && campoNum <= 140) ||
+            (campoNum >= 225 && campoNum <= 240)) return 'bipolar';
+        
+        // Streaming (S4) + Reserva (S22)
+        if ((campoNum >= 49 && campoNum <= 56) ||
+            (campoNum >= 217 && campoNum <= 224)) return 'binario';
+        
+        // Seguridad (S5) + Grafos (S19) + Kalman (S20)
+        if ((campoNum >= 57 && campoNum <= 72) ||
+            (campoNum >= 189 && campoNum <= 208)) return 'criptografico';
+        
+        return 'metrica';
+    }
+
+    private normalizarAltaMagnitud(campo: string, valor: number): number {
+        // Para campos con posible alto rango (0 a 1e9)
+        const stats = this.normalizador.obtenerEstadisticas(campo);
+        
+        // Detectar rango dinámico
+        const maxEsperado = Math.max(1e6, stats.μ + 3 * stats.σ);
+        
+        if (Math.abs(valor) > 1e3) {
+            // Log scaling para valores grandes
+            const logValue = Math.sign(valor) * Math.log1p(Math.abs(valor));
+            const logMax = Math.log1p(maxEsperado);
+            return (logValue / logMax);
         }
+        
+        // Para valores pequeños: normalización estándar
+        const normalizado = this.normalizador.normalizar(campo, valor);
+        this.normalizador.actualizar(campo, [valor]);
+        
+        return Math.tanh(normalizado); // Clip suave a [-1,1]
+    }
 
-        // Campos uint8 (flags, índices): min-max [0,1]
-        if ([8, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 125, 126, 127, 128, 129, 130, 131, 132, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224].includes(campoNum)) {
-            return Math.max(0, Math.min(1, valor / 255)); // uint8 [0,255] → [0,1]
+    private normalizarTemporal(campo: string, valor: number): number {
+        // Preservar media=0, solo escalar por desviación
+        const stats = this.normalizador.obtenerEstadisticas(campo);
+        this.normalizador.actualizar(campo, [valor]);
+        
+        return this.normalizador.normalizar(campo, valor);
+    }
+
+    private normalizarBipolar(campo: string, valor: number): number {
+        // Asumir rango ~ [-1000, 1000] para emociones/potenciales
+        const normalizado = Math.tanh(valor / 1000);
+        const stats = this.normalizador.obtenerEstadisticas(campo);
+        this.normalizador.actualizar(campo, [valor]);
+        
+        // Aplicar corrección adaptativa si tenemos estadísticas
+        if (stats.count > 10) {
+            return normalizado * (stats.σ / Math.max(0.1, stats.σ));
         }
+        
+        return normalizado;
+    }
 
-        // Campos uint16 (métricas): min-max con rangos específicos
-        return Math.max(0, Math.min(1, valor / 65535)); // uint16 [0,65535] → [0,1]
+    private normalizarBinario(valor: number): number {
+        // Rango uint8: [0, 255]
+        return (Math.max(0, Math.min(255, valor)) / 255.0) * 2 - 1; // [-1, 1]
+    }
+
+    private normalizarMetrica(campo: string, valor: number): number {
+        // Rango uint16: [0, 65535]
+        // O log scaling si el valor es muy grande
+        
+        if (valor > 10000) {
+            // Log scaling para valores grandes
+            const logVal = Math.log1p(valor);
+            const logMax = Math.log1p(65535);
+            return (logVal / logMax) * 2 - 1; // [-1, 1]
+        }
+        
+        // Min-max directo
+        const normalizado = Math.max(0, Math.min(1, valor / 65535));
+        this.normalizador.actualizar(campo, [valor]);
+        
+        return normalizado * 2 - 1; // [-1, 1]
     }
 
     /**
@@ -128,6 +757,9 @@ export class CapaSensorial {
     private subRedes: Map<string, InferenciaLocal> = new Map();
     private capaEntrada: CapaEntrada;
     private inicializado: boolean = false;
+    private posEncoder: PositionalEncoder = new PositionalEncoder();
+    private interAtencion: InterSubespacioAttention = new InterSubespacioAttention();
+    private learnableWeights: LearnableSubespacioWeights | null = null;
 
     constructor() {
         this.capaEntrada = new CapaEntrada();
@@ -147,12 +779,22 @@ export class CapaSensorial {
             this.subRedes.set(subespacio.id, subRed);
         }
 
+        // Inicializar learnable weights
+        const subespaciosIds = subespacios.map(s => s.id);
+        this.learnableWeights = new LearnableSubespacioWeights(subespaciosIds);
+
         this.inicializado = true;
         console.log('🧠 Capa Sensorial inicializada con 25 sub-redes LIF');
+        console.log('✨ Mejoras Fase 2: Inter-Atención + Learnable Weights activos');
     }
 
     /**
      * Procesa el vector 256D completo a través de las 25 sub-redes
+     * Ahora incluye:
+     * - Positional Encoding (Fase 1)
+     * - Inter-Subespacio Attention (Fase 2)
+     * - Learnable Weights (Fase 2)
+     * 
      * @param vector256d Vector de entrada completo
      * @returns Salida latente de cada subespacio (25 × 64D)
      */
@@ -162,19 +804,19 @@ export class CapaSensorial {
         }
 
         const subespaciosDivididos = this.capaEntrada.procesar(vector256d);
-        const resultado: SalidaCapa1 = {};
+        let resultado: SalidaCapa1 = {};
 
         // Procesar cada subespacio en paralelo
-        const promesas = Array.from(subespaciosDivididos.entries()).map(async ([id, valores]) => {
+        const subespaciosArray = Array.from(subespaciosDivididos.entries());
+        
+        const promesas = subespaciosArray.map(async ([id, valores], indice) => {
             const subRed = this.subRedes.get(id);
             if (!subRed) {
                 throw new Error(`Sub-red ${id} no encontrada`);
             }
 
-            // El modelo ONNX espera un tensor específico
-            // Aquí asumimos que el modelo procesa el subespacio y devuelve 64D
             try {
-                // Convertir valores escalares a estructura de grafo (Node Features + Edge Index)
+                // Convertir valores escalares a estructura de grafo
                 const { nodeFeatures, edgeIndex } = this.vectorAGrafo(valores);
                 
                 // El vector global debe ser 256D, rellenamos con ceros si es local
@@ -182,52 +824,94 @@ export class CapaSensorial {
                 valores.forEach((v, i) => { if(i < 256) globalVector[i] = v; });
 
                 const salida = await subRed.predecir(nodeFeatures, edgeIndex, globalVector, {}); 
-                resultado[id] = this.extraerVectorLatente(salida);
+                let vectorLatente = this.extraerVectorLatente(salida);
+                
+                // FASE 1: Agregar Positional Encoding sinusoidal
+                const posEncoding = this.posEncoder.generar(indice, 64);
+                vectorLatente = vectorLatente.map((v, i) => v + posEncoding[i] * 0.1);
+                
+                resultado[id] = vectorLatente;
             } catch (error) {
-                // Fallback: Simulación LIF (Leaky Integrate-and-Fire) si el modelo falla o no es compatible
-                // console.warn(`⚠️ Fallback LIF en subred ${id}: ${error}`);
+                // Fallback: Simulación LIF mejorada
                 resultado[id] = this.simularRespuestaLIF(valores);
             }
         });
 
         await Promise.all(promesas);
+        
+        // FASE 2: Aplicar Inter-Subespacio Attention
+        resultado = this.interAtencion.aplicarAtencion(resultado);
+        
+        // FASE 2: Aplicar Learnable Weights
+        if (this.learnableWeights) {
+            resultado = this.learnableWeights.aplicar(resultado);
+        }
+        
+        // Limpiar cache del encoder
+        this.posEncoder.limpiarCache();
 
         return resultado;
     }
 
     /**
-     * Convierte un vector plano de valores en una estructura de grafo simple
-     * para ser consumida por la GNN/ONNX.
-     * Mapea cada 4 valores a 1 nodo con 4 features.
+     * Convierte vector a grafo con Sparse Attention estratificada
+     * Estrategia de conexiones en 3 niveles:
+     * - Local (i → i±1): máxima densidad (100%)
+     * - Medium (i → i±3): media densidad (40%)
+     * - Global (i → j random): baja densidad (10%)
+     * 
+     * Resultado: ~10% de conexiones totales (sparse) pero efectivas
      */
     private vectorAGrafo(valores: number[]): { nodeFeatures: number[][], edgeIndex: number[][] } {
         const FEATURES_PER_NODE = 4;
         const numNodos = Math.ceil(valores.length / FEATURES_PER_NODE);
         const nodeFeatures: number[][] = [];
 
+        // Crear nodos
         for (let i = 0; i < numNodos; i++) {
             const start = i * FEATURES_PER_NODE;
             const chunk = valores.slice(start, start + FEATURES_PER_NODE);
-            // Rellenar con ceros si el chunk es menor a 4
             while (chunk.length < FEATURES_PER_NODE) chunk.push(0);
             nodeFeatures.push(chunk);
         }
 
-        // Crear conexiones lineales simples: 0->1, 1->2, etc.
-        // EdgeIndex shape: [2, num_edges]
+        // Crear conexiones sparse estratificadas
         const source: number[] = [];
         const target: number[] = [];
-        
-        if (numNodos > 1) {
-            for (let i = 0; i < numNodos - 1; i++) {
+
+        for (let i = 0; i < numNodos; i++) {
+            // 1. Conexiones locales: i → i±1 (100% densidad)
+            if (i > 0) {
                 source.push(i);
-                target.push(i + 1);
-                // Bidireccional
-                source.push(i + 1);
+                target.push(i - 1);
+                source.push(i - 1);
                 target.push(i);
             }
-        } else {
-            // Self-loop si solo hay un nodo para evitar arrays vacíos si el modelo lo requiere
+            
+            // 2. Conexiones medium: i → i±3 (40% probabilidad)
+            if (i > 2 && Math.random() < 0.4) {
+                source.push(i);
+                target.push(i - 3);
+                source.push(i - 3);
+                target.push(i);
+            }
+            
+            if (i < numNodos - 3 && Math.random() < 0.4) {
+                source.push(i);
+                target.push(i + 3);
+                source.push(i + 3);
+                target.push(i);
+            }
+            
+            // 3. Self-loops para estabilidad (10% por nodo)
+            if (Math.random() < 0.1) {
+                source.push(i);
+                target.push(i);
+            }
+        }
+
+        // Fallback: si solo hay 1 nodo o sin conexiones, crear self-loop
+        if (source.length === 0) {
             source.push(0);
             target.push(0);
         }
@@ -269,25 +953,55 @@ export class CapaSensorial {
     }
 
     /**
-     * Simula una respuesta de neurona LIF (Leaky Integrate-and-Fire)
-     * como fallback cuando el modelo ONNX no es adecuado para el subespacio.
+     * Simula respuesta neuronal LIF (Leaky Integrate-and-Fire) mejorada
+     * Más realista que binario puro: codifica intensidad + decaimiento
+     * 
+     * Modelo LIF simplificado:
+     * v[i](t) = v[i](t-1) * exp(-Δt/τ) + input[i] + noise
+     * spike = v[i] > θ_i
+     * salida[i] = tanh(v[i] / θ_i)  // Normalizado a intensidad
      */
     private simularRespuestaLIF(valores: number[]): number[] {
         const latente = new Array(64).fill(0);
         const suma = valores.reduce((a, b) => a + b, 0);
         const promedio = suma / valores.length;
+        const desv = Math.sqrt(valores.reduce((sq, v) => sq + (v - promedio) ** 2, 0) / valores.length);
 
-        // Generar un patrón de "spikes" basado en la intensidad de la entrada
+        // Parámetros LIF
+        const tau = 20;         // Constante de tiempo (ms)
+        const dt = 1;           // Step temporal (ms)
+        const decay = Math.exp(-dt / tau);
+        const sigmaRuido = 0.05; // Desviación de ruido Gaussiano
+
         for (let i = 0; i < 64; i++) {
-            // Cada "neurona" latente tiene un umbral ligeramente diferente
-            const umbral = 0.3 + (i / 100);
-            const ruido = (Math.random() - 0.5) * 0.1;
-            latente[i] = (promedio + ruido > umbral) ? 1.0 : 0.0;
+            // Umbral adaptativo: base + variación per-neurona
+            const umbralBase = 0.3 + (i / 200);
+            const umbralAdapt = umbralBase + desv * 0.1;
             
-            // Aplicar decaimiento (leak) - simplificado para este mock
-            if (latente[i] > 0) {
-                latente[i] *= Math.exp(-0.1); 
+            // Estado de integración (simulado desde cero en cada paso)
+            const input = (promedio + (valores[i % valores.length] || 0)) / 2;
+            const ruido = (Math.random() - 0.5) * sigmaRuido;
+            
+            // Integración: v(t) = v(t-1) * decay + input
+            let v = input + ruido;
+            
+            // Decaimiento exponencial (leak)
+            v *= decay;
+            
+            // Salida: intensidad de spike normalizada
+            // Si v > umbral: intensidad alta
+            // Si v < umbral: intensidad baja/cero
+            
+            if (v > umbralAdapt) {
+                // Spike ocurrió: codificar intensidad
+                latente[i] = Math.tanh((v - umbralAdapt) / (umbralAdapt * 0.5));
+            } else {
+                // Sub-threshold: actividad espontánea mínima
+                latente[i] = Math.max(0, v * 0.1);
             }
+            
+            // Asegurar rango [0, 1]
+            latente[i] = Math.max(0, Math.min(1, latente[i]));
         }
 
         return latente;
@@ -296,11 +1010,40 @@ export class CapaSensorial {
     /**
      * Obtiene estadísticas de procesamiento
      */
-    getEstadisticas(): { subRedesActivas: number; memoriaUsada: number } {
-        return {
+    getEstadisticas(): { 
+        subRedesActivas: number; 
+        memoriaUsada: number;
+        atencionStats?: { subespaciosDominantes: string[]; diversidadAtencion: number };
+        weightsStats?: { pesosMin: number; pesosMax: number; pesosMedio: number; subespaciosMasFuertes: string[] };
+    } {
+        const base = {
             subRedesActivas: this.subRedes.size,
             memoriaUsada: this.subRedes.size * 1024 * 4 // Estimación rough: 1024 neuronas × 4 bytes
         };
+
+        // Agregar estadísticas de atención si está disponible
+        if (this.interAtencion) {
+            base.atencionStats = this.interAtencion.obtenerEstadisticas();
+        }
+
+        // Agregar estadísticas de pesos si está disponible
+        if (this.learnableWeights) {
+            base.weightsStats = this.learnableWeights.obtenerEstadisticas();
+        }
+
+        return base;
+    }
+
+    /**
+     * Actualiza pesos aprendibles basado en performance de cada subespacio
+     * Llamar después de cada ciclo de entrenamiento
+     * 
+     * @param performance Mapa de subespacio ID → accuracy/performance [0,1]
+     */
+    actualizarPesos(performance: Map<string, number>): void {
+        if (this.learnableWeights) {
+            this.learnableWeights.actualizar(performance);
+        }
     }
 }
 

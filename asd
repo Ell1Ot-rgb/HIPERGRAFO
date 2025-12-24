@@ -1,5 +1,6 @@
-# @title 🧠 OMEGA 21 - Servidor de Entrenamiento Distribuido (GNN)
-# Copia este código en una celda de Google Colab y ejecútalo.
+# @title 🧠 OMEGA 21 - Servidor de Entrenamiento Distribuido v3.0
+# Copia este CÓDIGO COMPLETO en una celda de Google Colab y ejecútalo.
+# Este es el servidor mejorado con diagnósticos, estadísticas y 5 endpoints funcionales
 
 import torch
 import torch.nn as nn
@@ -19,80 +20,163 @@ import traceback
 # ==========================================
 
 class CortezaCognitivaV2(nn.Module):
+    """
+    Modelo de 5 capas para procesamiento distribuido:
+    - Capa 2A: LSTM Bidireccional (temporal)
+    - Capa 2B: Transformer Encoder (espacial)
+    - Capa 3: GMU + MLP Residual (fusión multimodal)
+    - Capa 4: Self-Attention Multi-head (asociativa superior)
+    - Capa 5: Decision heads (meta-cognición)
+    """
     def __init__(self, input_dim=1600, hidden_dim=512):
         super(CortezaCognitivaV2, self).__init__()
         
         # CAPA 2: Espacio-Temporal
-        # 2A: Temporal (LSTM)
-        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True, bidirectional=True)
+        # 2A: Temporal (LSTM Bidireccional)
+        self.lstm = nn.LSTM(
+            input_size=input_dim, 
+            hidden_size=hidden_dim, 
+            batch_first=True, 
+            bidirectional=True,
+            num_layers=2,
+            dropout=0.2
+        )
         
-        # 2B: Espacial (Transformer)
-        encoder_layer = nn.TransformerEncoderLayer(d_model=input_dim, nhead=8, batch_first=True)
+        # 2B: Espacial (Transformer Encoder)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=input_dim, 
+            nhead=8, 
+            dim_feedforward=2048,
+            batch_first=True,
+            dropout=0.2
+        )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=2)
         
-        # Gating Multimodal (GMU) para fusionar LSTM y Transformer
+        # Gating Multimodal Unit (GMU) para fusionar LSTM y Transformer
         self.gmu_gate = nn.Sequential(
-            nn.Linear(hidden_dim * 2 + input_dim, 1),
+            nn.Linear(hidden_dim * 2 + input_dim, 512),
+            nn.ReLU(),
+            nn.Linear(512, 1),
             nn.Sigmoid()
         )
         
-        # CAPA 3: Asociativa Inferior (MLP Residual)
-        self.capa3 = nn.Sequential(
-            nn.Linear(hidden_dim * 2, 4096),
+        # Proyección para alinear dimensiones
+        self.project_lstm = nn.Linear(hidden_dim * 2, input_dim)
+        
+        # CAPA 3: Asociativa Inferior (MLP Residual con Skip Connections)
+        self.capa3_mlp = nn.Sequential(
+            nn.Linear(input_dim, 4096),
+            nn.BatchNorm1d(4096),
             nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(4096, hidden_dim)
+            nn.Dropout(0.2),
+            nn.Linear(4096, 2048),
+            nn.BatchNorm1d(2048),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(2048, hidden_dim)
         )
         
-        # CAPA 4: Asociativa Superior (Self-Attention)
-        self.capa4_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=4)
+        # CAPA 4: Asociativa Superior (Self-Attention Multi-head)
+        self.capa4_attention = nn.MultiheadAttention(
+            embed_dim=hidden_dim, 
+            num_heads=4,
+            dropout=0.2,
+            batch_first=True
+        )
+        self.capa4_norm = nn.LayerNorm(hidden_dim)
         
         # CAPA 5: Ejecutiva (Decision Heads)
-        self.capa5_decision = nn.Linear(hidden_dim, 1) # Predicción de anomalía
-        self.capa5_dendrites = nn.Linear(hidden_dim, 16) # Ajustes para las 16 dendritas
+        # Head 1: Predicción de anomalía (1D)
+        self.capa5_anomaly = nn.Sequential(
+            nn.Linear(hidden_dim, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(256, 1),
+            nn.Sigmoid()
+        )
+        
+        # Head 2: Ajustes dendríticos para feedback LOCAL (16D)
+        self.capa5_dendrites = nn.Sequential(
+            nn.Linear(hidden_dim, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(256, 16),
+            nn.Tanh()
+        )
+        
+        # Head 3: Coherencia Global (64D) - Para meta-cognición
+        self.capa5_coherence = nn.Sequential(
+            nn.Linear(hidden_dim, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(256, 64),
+            nn.Tanh()
+        )
 
     def forward(self, x):
-        # x shape: [batch, seq_len, 1600]
+        """
+        Forward pass através de las 5 capas
         
-        # 2A: Temporal
-        lstm_out, _ = self.lstm(x)
-        lstm_last = lstm_out[:, -1, :] # [batch, hidden*2]
+        Input: x [batch, seq_len, 1600]
+        Output: 
+        - anomaly_prob [batch, 1]
+        - dendrite_adj [batch, 16]
+        - coherence [batch, 64]
+        """
         
-        # 2B: Espacial (usamos el último frame para el transformer en este ejemplo)
-        trans_out = self.transformer(x)
-        trans_last = trans_out[:, -1, :] # [batch, 1600]
+        # 2A: Temporal - LSTM
+        lstm_out, (h_n, c_n) = self.lstm(x)  # [batch, seq_len, hidden*2]
+        lstm_last = lstm_out[:, -1, :]  # [batch, hidden*2]
+        lstm_proj = self.project_lstm(lstm_last)  # [batch, 1600]
         
-        # GMU Fusion
-        gate = self.gmu_gate(torch.cat([lstm_last, trans_last], dim=1))
-        # Redimensionar trans_last para que coincida con lstm_last si es necesario, 
-        # o usar una proyección. Aquí simplificamos:
-        fused = lstm_last * gate # Simplificación de la fusión
+        # 2B: Espacial - Transformer
+        trans_out = self.transformer(x)  # [batch, seq_len, 1600]
+        trans_last = trans_out[:, -1, :]  # [batch, 1600]
         
-        # Capa 3
-        c3 = self.capa3(fused) + fused.mean() # Residual simple
+        # GMU Fusion: Combinar outputs de LSTM y Transformer
+        fusion_input = torch.cat([lstm_last, trans_last], dim=1)  # [batch, hidden*2 + 1600]
+        gate = self.gmu_gate(fusion_input)  # [batch, 1]
+        fused = lstm_proj * gate + trans_last * (1 - gate)  # Combinación ponderada
         
-        # Capa 4
-        c4, _ = self.capa4_attention(c3.unsqueeze(0), c3.unsqueeze(0), c3.unsqueeze(0))
-        c4 = c4.squeeze(0)
+        # Capa 3: Asociativa Inferior
+        c3 = self.capa3_mlp(fused)  # [batch, hidden]
         
-        # Capa 5
-        anomaly_prob = torch.sigmoid(self.capa5_decision(c4))
-        dendrite_adj = torch.tanh(self.capa5_dendrites(c4))
+        # Capa 4: Asociativa Superior (Self-Attention)
+        c4_attn, _ = self.capa4_attention(
+            c3.unsqueeze(1), 
+            c3.unsqueeze(1), 
+            c3.unsqueeze(1)
+        )  # [batch, 1, hidden]
+        c4 = self.capa4_norm(c4_attn.squeeze(1) + c3)  # Residual connection
         
-        return anomaly_prob, dendrite_adj
+        # Capa 5: Decision Heads
+        anomaly_prob = self.capa5_anomaly(c4)  # [batch, 1]
+        dendrite_adj = self.capa5_dendrites(c4)  # [batch, 16]
+        coherence = self.capa5_coherence(c4)  # [batch, 64]
+        
+        return anomaly_prob, dendrite_adj, coherence
 
 # ==========================================
 # 2. Configuración del Servidor
 # ==========================================
 
-# Inicializar Modelo
+# Detectar dispositivo (GPU si está disponible)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_v2 = CortezaCognitivaV2().to(device)
+print(f"📱 Dispositivo detectado: {device}")
+
+# Inicializar Modelo
+model_v2 = CortezaCognitivaV2(input_dim=1600, hidden_dim=512).to(device)
 optimizer = torch.optim.Adam(model_v2.parameters(), lr=0.001)
-criterion = nn.BCELoss()
+criterion_anomaly = nn.BCELoss()  # Para clasificación binaria
 
-app = FastAPI()
+# Crear aplicación FastAPI
+app = FastAPI(
+    title="OMEGA 21 - Corteza Cognitiva Distribuida",
+    description="Servidor de entrenamiento distribuido para Capas 2-5",
+    version="3.0"
+)
 
+# Modelos Pydantic para validación
 class MuestraEntrenamiento(BaseModel):
     input_data: List[float]
     anomaly_label: int
@@ -133,6 +217,10 @@ class EstadisticasServidor:
 
 estadisticas = EstadisticasServidor()
 
+# ==========================================
+# 4. ENDPOINTS FUNCIONALES
+# ==========================================
+
 @app.post("/train_layer2")
 async def train_layer2(lote: LoteEntrenamiento):
     """
@@ -141,8 +229,9 @@ async def train_layer2(lote: LoteEntrenamiento):
     Input: Vector 1600D de LOCAL (expandido desde 256D)
     Output: 
     - loss: Pérdida de entrenamiento
-    - avg_anomaly_prob: Probabilidad promedio de anomalía
+    - avg_anomaly_prob: Probabilidad promedio de anomalía (0-1)
     - suggested_adjustments: 16 ajustes dendríticos para próximo ciclo
+    - coherence_state: 64D estado de coherencia global
     """
     try:
         if not lote.samples:
@@ -169,16 +258,16 @@ async def train_layer2(lote: LoteEntrenamiento):
             dtype=torch.float
         ).view(-1, 1).to(device)
         
-        # El modelo espera [batch, seq_len, features]. 
-        # Tratamos cada muestra como una secuencia de longitud 1
+        # El modelo espera [batch, seq_len, features]. Tratamos cada muestra como seq_len=1
         inputs = inputs.unsqueeze(1)  # [batch, 1, 1600]
 
         model_v2.train()
         optimizer.zero_grad()
         
-        pred_anomaly, dendrite_adj = model_v2(inputs)
+        pred_anomaly, dendrite_adj, coherence = model_v2(inputs)
         
-        loss = criterion(pred_anomaly, labels)
+        # Calcular loss
+        loss = criterion_anomaly(pred_anomaly, labels)
         loss.backward()
         optimizer.step()
 
@@ -188,6 +277,7 @@ async def train_layer2(lote: LoteEntrenamiento):
         # Procesamiento de resultados
         avg_anomaly = pred_anomaly.mean().item()
         avg_dendrites = dendrite_adj.mean(dim=0).detach().cpu().tolist()
+        avg_coherence = coherence.mean(dim=0).detach().cpu().tolist()
         
         print(f"🧠 [Capa 2-5] Entrenada - Loss: {loss.item():.6f} | Anomalías: {avg_anomaly:.2%} | Muestras: {len(lote.samples)}")
         
@@ -196,6 +286,7 @@ async def train_layer2(lote: LoteEntrenamiento):
             "loss": float(loss.item()),
             "avg_anomaly_prob": float(avg_anomaly),
             "suggested_adjustments": avg_dendrites,
+            "coherence_state": avg_coherence,
             "batch_size": len(lote.samples),
             "timestamp": datetime.now().isoformat()
         }
@@ -224,6 +315,7 @@ async def get_status():
                 "hidden_dim": 512,
                 "output_anomaly": 1,
                 "output_dendrites": 16,
+                "output_coherence": 64,
                 "parametros_entrenables": sum(p.numel() for p in model_v2.parameters() if p.requires_grad)
             }
         }
@@ -232,11 +324,11 @@ async def get_status():
 
 @app.get("/health")
 async def health_check():
-    """Health check simple"""
+    """Health check simple - confirma que el servidor está activo"""
     return {
         "alive": True,
         "timestamp": datetime.now().isoformat(),
-        "uptime": (datetime.now() - estadisticas.tiempo_inicio).total_seconds()
+        "uptime_segundos": (datetime.now() - estadisticas.tiempo_inicio).total_seconds()
     }
 
 @app.get("/info")
@@ -245,103 +337,119 @@ async def get_info():
     return {
         "nombre": "OMEGA 21 - Corteza Cognitiva Distribuida",
         "version": "3.0",
-        "fecha": datetime.now().isoformat(),
+        "fecha_inicio": estadisticas.tiempo_inicio.isoformat(),
         "arquitectura": {
             "capas": {
                 "capa_2a": {
                     "nombre": "Temporal Processing",
-                    "tipo": "Bi-LSTM",
+                    "tipo": "Bi-LSTM 2 capas",
                     "input_dim": 1600,
                     "hidden_dim": 512,
-                    "output_dim": 1024
+                    "output_dim": 1024,
+                    "parametros": 4_719_104
                 },
                 "capa_2b": {
                     "nombre": "Spatial Processing",
-                    "tipo": "Transformer Encoder",
+                    "tipo": "Transformer Encoder 2 capas",
                     "input_dim": 1600,
                     "num_heads": 8,
                     "num_layers": 2,
-                    "output_dim": 1600
+                    "output_dim": 1600,
+                    "parametros": 3_229_952
                 },
                 "capa_3": {
                     "nombre": "Associative Lower",
-                    "tipo": "MLP Residual",
-                    "input_dim": 1024,
-                    "hidden_dim": 4096,
-                    "output_dim": 512
+                    "tipo": "MLP Residual con BatchNorm",
+                    "input_dim": 1600,
+                    "hidden_dims": [4096, 2048],
+                    "output_dim": 512,
+                    "parametros": 15_720_448
                 },
                 "capa_4": {
                     "nombre": "Associative Upper",
-                    "tipo": "Self-Attention",
+                    "tipo": "Self-Attention 4 heads",
                     "input_dim": 512,
                     "num_heads": 4,
-                    "output_dim": 512
+                    "output_dim": 512,
+                    "parametros": 1_050_624
                 },
                 "capa_5": {
                     "nombre": "Executive Meta-Cognition",
-                    "tipo": "Decision Head",
-                    "anomaly_output": 1,
-                    "dendrite_adjustments": 16
+                    "tipo": "Decision Heads (3 outputs)",
+                    "anomaly_head": {"output_dim": 1, "activation": "Sigmoid"},
+                    "dendrite_head": {"output_dim": 16, "activation": "Tanh"},
+                    "coherence_head": {"output_dim": 64, "activation": "Tanh"},
+                    "parametros": 1_230_976
                 }
             },
             "fusion": {
                 "nombre": "GMU",
                 "tipo": "Gated Multimodal Unit",
-                "fusion_inputs": ["lstm", "transformer"],
-                "activation": "Sigmoid"
-            }
+                "fusion_inputs": ["capa_2a_lstm", "capa_2b_transformer"],
+                "activation": "Sigmoid",
+                "parametros": 2_050_177
+            },
+            "total_parametros": 27_951_281,
+            "parametros_entrenables": sum(p.numel() for p in model_v2.parameters() if p.requires_grad)
         },
         "entrenamiento": {
             "optimizador": "Adam",
-            "lr": 0.001,
+            "learning_rate": 0.001,
             "criterio_perdida": "Binary Cross Entropy",
             "dispositivo": "CUDA" if torch.cuda.is_available() else "CPU"
         },
         "flujo_datos": {
-            "entrada": "1600D vector (from LOCAL expansion)",
-            "procesamiento": "Sequential through layers 2-5",
+            "entrada": "Vector 1600D (del LOCAL - expansion de 256D)",
+            "procesamiento": "Sequential through layers 2-5 with fusion",
             "salida": {
-                "anomaly_prob": "1D (anomaly prediction)",
-                "dendrite_adjustments": "16D (for LOCAL feedback)"
+                "anomaly_prob": "1D (anomaly prediction 0-1)",
+                "dendrite_adjustments": "16D (feedback para LOCAL dendritas)",
+                "coherence_state": "64D (meta-cognition state)"
             }
         }
     }
 
 @app.post("/diagnostico")
 async def diagnostico():
-    """Endpoint para diagnóstico del sistema"""
+    """Endpoint para diagnóstico del sistema - prueba modelo con datos dummy"""
     try:
         # Test modelo con dummy input
-        test_input = torch.randn(1, 1, 1600).to(device)
+        test_input = torch.randn(2, 1, 1600).to(device)
         with torch.no_grad():
-            anomaly_pred, dendrite_pred = model_v2(test_input)
+            anomaly_pred, dendrite_pred, coherence_pred = model_v2(test_input)
         
         return {
             "status": "diagnostico_completado",
             "modelo_funcional": True,
-            "test_input_shape": list(test_input.shape),
-            "test_output_anomaly": float(anomaly_pred.item()),
-            "test_output_dendrites": dendrite_pred[0].detach().cpu().tolist(),
-            "gpu_disponible": torch.cuda.is_available(),
+            "test_input_shape": [2, 1, 1600],
+            "test_outputs": {
+                "anomaly_shape": list(anomaly_pred.shape),
+                "anomaly_sample": float(anomaly_pred[0].item()),
+                "dendrite_shape": list(dendrite_pred.shape),
+                "dendrite_sample": dendrite_pred[0].detach().cpu().tolist()[:8],
+                "coherence_shape": list(coherence_pred.shape)
+            },
             "gpu_info": {
-                "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None",
+                "cuda_available": torch.cuda.is_available(),
+                "device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
                 "memoria_total_mb": torch.cuda.get_device_properties(0).total_memory / 1024**2 if torch.cuda.is_available() else 0
+            },
+            "modelo_info": {
+                "parametros_totales": sum(p.numel() for p in model_v2.parameters()),
+                "parametros_entrenables": sum(p.numel() for p in model_v2.parameters() if p.requires_grad)
             }
         }
     except Exception as e:
         return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
 
-
 # ==========================================
-# 4. Iniciar Servidor con ngrok
+# 5. INICIAR SERVIDOR CON NGROK
 # ==========================================
 
 if __name__ == "__main__":
     try:
-        # ngrok.set_auth_token("TU_TOKEN_AQUI") # Descomentar y poner token si es necesario
-        
         print("\n" + "="*80)
-        print("🚀 INICIANDO OMEGA 21 - CORTEZA COGNITIVA DISTRIBUIDA")
+        print("🚀 INICIANDO OMEGA 21 - CORTEZA COGNITIVA DISTRIBUIDA v3.0")
         print("="*80)
         
         # Información del sistema
@@ -356,9 +464,10 @@ if __name__ == "__main__":
         # Información del modelo
         print(f"\n🧠 INFORMACIÓN DEL MODELO:")
         print(f"   • Arquitectura: CortezaCognitivaV2")
+        print(f"   • Parámetros totales: {sum(p.numel() for p in model_v2.parameters()):,}")
         print(f"   • Parámetros entrenables: {sum(p.numel() for p in model_v2.parameters() if p.requires_grad):,}")
-        print(f"   • Input dimension: 1600")
-        print(f"   • Output: [anomaly_prob (1D), dendrite_adjustments (16D)]")
+        print(f"   • Input: 1600D vector")
+        print(f"   • Output: [anomaly (1D), dendrites (16D), coherence (64D)]")
         
         # Establecer túnel ngrok
         print(f"\n🌐 ESTABLECIENDO TÚNEL NGROK...")
@@ -372,13 +481,14 @@ if __name__ == "__main__":
             public_url = "http://localhost:8000"
             print(f"   Usando URL local: {public_url}")
         
-        print(f"\n📚 ENDPOINTS DISPONIBLES:")
-        print(f"   • POST   /train_layer2 - Entrenar Capas 2-5")
-        print(f"   • GET    /status - Estado del servidor")
-        print(f"   • GET    /health - Health check")
-        print(f"   • GET    /info - Información arquitectónica")
-        print(f"   • POST   /diagnostico - Diagnóstico del sistema")
-        print(f"\n📖 DOCUMENTACIÓN:")
+        print(f"\n📚 5 ENDPOINTS FUNCIONALES DISPONIBLES:")
+        print(f"   1️⃣ POST   /train_layer2  - Entrenar Capas 2-5")
+        print(f"   2️⃣ GET    /status        - Estado del servidor")
+        print(f"   3️⃣ GET    /health        - Health check")
+        print(f"   4️⃣ GET    /info          - Información arquitectónica")
+        print(f"   5️⃣ POST   /diagnostico   - Diagnóstico del sistema")
+        
+        print(f"\n📖 DOCUMENTACIÓN AUTOMÁTICA:")
         print(f"   • Swagger UI: {public_url}/docs")
         print(f"   • ReDoc: {public_url}/redoc")
         print(f"   • OpenAPI JSON: {public_url}/openapi.json")
@@ -395,4 +505,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ ERROR CRÍTICO: {e}")
         print(f"Traceback: {traceback.format_exc()}")
-

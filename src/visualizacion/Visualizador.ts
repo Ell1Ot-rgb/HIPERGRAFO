@@ -95,7 +95,9 @@ export class Visualizador {
      * Actualiza el estado con los resultados de la jerarquía cognitiva (Capas 0-3)
      */
     public actualizarCognicion(resultado: any) {
-        // Si no hay un estado base, creamos uno mínimo para que el frontend no falle
+        const { sensorial, contexto, decision, coherencia } = resultado;
+
+        // Crear un estado base si no existe
         if (!this.ultimoEstado) {
             this.ultimoEstado = {
                 timestamp: Date.now(),
@@ -104,21 +106,54 @@ export class Visualizador {
                 feedback: null,
                 fisica: null,
                 neuronal: null,
-                coherencia: null
+                coherencia: null,
+                cognicion: {}
             };
         }
 
-        // Integrar datos de cognición
-        this.ultimoEstado.cognicion = {
-            sensorial: resultado.sensorial, // 25 átomos
-            contexto: resultado.contexto,   // Capa 2 (LSTM/Transformer)
-            decision: resultado.decision,   // Capa 3 (Urgencia/Confianza)
-            coherencia: resultado.coherencia // Imagen Mental
+        // 1. Mapear la Imagen Mental (Hipergrafo de Coherencia) a un formato visual
+        const nodosGrafo: any[] = [];
+        const edgesGrafo: any[] = [];
+        if (coherencia && coherencia.imagenMental) {
+            coherencia.imagenMental.obtenerNodos().forEach((n: any) => {
+                nodosGrafo.push({
+                    data: { 
+                        id: n.id, 
+                        label: n.label.substring(0, 20), // Acortar etiquetas largas
+                        tipo: n.metadata.tipo || 'CONCEPTO',
+                        valor: n.metadata.relevancia || n.metadata.valor || 0
+                    }
+                });
+            });
+            coherencia.imagenMental.obtenerHiperedges().forEach((edge: any) => {
+                const edgeId = `edge_${edge.id}`;
+                nodosGrafo.push({
+                    data: { id: edgeId, label: '', tipo: 'HIPEREDGE', valor: 0 }
+                });
+                edge.nodos.forEach((nodoId: any) => {
+                    edgesGrafo.push({
+                        data: { source: nodoId, target: edgeId }
+                    });
+                });
+            });
+        }
+        
+        // 2. Fusionar el estado
+        this.ultimoEstado = {
+            ...this.ultimoEstado,
+            timestamp: Date.now(),
+            grafo: { nodes: nodosGrafo, edges: edgesGrafo },
+            cognicion: {
+                sensorial,
+                contexto,
+                decision
+            },
+            coherencia: {
+                ...coherencia,
+                imagenMental: undefined // No enviar el objeto completo, ya está en 'grafo'
+            },
+            neuronal: contexto, // Para compatibilidad con vistas antiguas
         };
-
-        // Actualizar coherencia y neuronal para compatibilidad
-        this.ultimaCoherencia = resultado.coherencia;
-        this.ultimaNeuronal = resultado.contexto;
     }
 
     public iniciar() {
