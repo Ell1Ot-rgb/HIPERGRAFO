@@ -1,0 +1,2 @@
+*.onnx filter=lfs diff=lfs merge=lfs -text
+almacenamiento_hipergrafos/*.json filter=lfs diff=lfs merge=lfs -text
