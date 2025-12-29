@@ -11,5 +11,6 @@ Files:
 - docs/: documentation
 - scripts/: runnable scripts
 - code/: reference code of layers and generators
-- models/: exported ONNX models
+- art_17.onnx, art_17_fixed.onnx, art_17_capa3_5.onnx: exported ONNX models
+- METADATA.sha256: SHA‑256 checksums for important files (verify with `sha256sum -c METADATA.sha256`)
 
