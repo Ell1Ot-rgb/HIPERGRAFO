@@ -639,14 +639,16 @@ async def train_reactor(lote: LoteEntrenamiento):
 
 # === Endpoint: Entrenar Capas 3-5 (usa ART ONNX como extractor o fallback PyTorch) ===
 @app.post("/train_layers_3_5")
-async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1):
+async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1, norm_mode: str = 'global'):
+    """Entrenar capas 3–5 en background.
+    norm_mode: 'global' (normalizar por feature) o 'per_sample' (normalizar cada muestra)"""
     global JOB_COUNTER
     JOB_COUNTER += 1
     job_id = f"job_{JOB_COUNTER}"
     with JOB_LOCK:
-        JOBS[job_id] = {"status": "queued", "epoch_start": stats.epoch}
+        JOBS[job_id] = {"status": "queued", "epoch_start": stats.epoch, "norm_mode": norm_mode}
 
-    def run_job(samples, epochs_local, jid):
+    def run_job(samples, epochs_local, jid, norm_mode_local):
         try:
             JOBS[jid]["status"] = "running"
             # Use module-level Capa3to5 (defined above) for training the layers 3-5
@@ -723,8 +725,13 @@ async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1):
             X_t = torch.from_numpy(X).to(device)
             y_t = torch.from_numpy(y).to(device)
 
-            # Normalize across dataset (per feature) to preserve absolute differences
-            X_t = (X_t - X_t.mean(dim=0, keepdim=True)) / (X_t.std(dim=0, keepdim=True) + 1e-6)
+            # Apply normalization according to requested mode
+            if norm_mode_local == 'per_sample':
+                # normalize each sample independently during training
+                X_t = (X_t - X_t.mean(dim=1, keepdim=True)) / (X_t.std(dim=1, keepdim=True) + 1e-6)
+            else:
+                # global normalization per feature
+                X_t = (X_t - X_t.mean(dim=0, keepdim=True)) / (X_t.std(dim=0, keepdim=True) + 1e-6)
 
             for ep in range(epochs_local):
                 optim_local.zero_grad()
@@ -738,15 +745,32 @@ async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1):
             try:
                 model_local.eval()
                 torch.onnx.export(model_local, torch.randn(1,2048).to(device), str(EXPORT_DIR / 'art_17_capa3_5.onnx'), input_names=['features'], output_names=['anom','dend'], opset_version=18)
-                JOBS[jid].update({'status':'done','path':str(EXPORT_DIR / 'art_17_capa3_5.onnx'),'loss':total_loss})
+                # capture hipergrafo stats by reading latest hipergrafo file
+                hip_edges = None
+                hip_nodos = None
+                hip_density = None
+                try:
+                    archivos = sorted(HIPERGRAFO_DIR.glob('hipergrafo_*.json'))
+                    if archivos:
+                        latest = archivos[-1]
+                        with open(latest, 'r') as fh:
+                            datos = json.load(fh)
+                        hip_nodos = len(datos.get('nodos', []))
+                        hip_edges = len(datos.get('hiperedges', []))
+                        hip_density = datos.get('estadisticas', {}).get('densidad', None)
+                except Exception:
+                    hip_edges = None
+                    hip_nodos = None
+                    hip_density = None
+                JOBS[jid].update({'status':'done','path':str(EXPORT_DIR / 'art_17_capa3_5.onnx'),'loss':total_loss,'hip_edges':hip_edges,'hip_nodos':hip_nodos,'hip_density':hip_density})
             except Exception as e:
                 JOBS[jid].update({'status':'error','error':str(e)})
         except Exception as e:
             JOBS[jid].update({'status':'error','error':str(e)})
 
-    # launch background job
-    Thread(target=run_job, args=(lote.samples, epochs, job_id), daemon=True).start()
-    return {"status":"queued","job_id":job_id}
+    # launch background job (pass normalization mode)
+    Thread(target=run_job, args=(lote.samples, epochs, job_id, norm_mode), daemon=True).start()
+    return {"status":"queued","job_id":job_id, "norm_mode": norm_mode}
 
 @app.get('/train_layers_3_5/status/{job_id}')
 async def train_layers_status(job_id: str):
