@@ -684,43 +684,55 @@ async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1):
                     JOBS[jid].update({'status':'error','error':str(e)})
                     return
 
-            # Training loop (synchronous) over given samples
+            # Prepare dataset features (vectorize tokenization + extraction) and then train in batches
             total_loss = 0.0
+            feats_list = []
+            labels_list = []
+            for sample in samples:
+                if len(sample.input_data) != 1600:
+                    continue
+                tokens = []
+                arr = np.array(sample.input_data)
+                for i in range(0, 1600, 50):
+                    chunk = arr[i:i+50]
+                    token_val = int((chunk.mean() + 1) * 1024) % 2048
+                    tokens.append(token_val)
+                toks_np = np.array(tokens, dtype=np.int64).reshape(1,32)
+
+                if use_onnx_local:
+                    logits = sess.run(['logits'], {input_name: toks_np})[0]
+                    feats = logits.mean(axis=1).astype(np.float32)
+                else:
+                    toks_t = torch.from_numpy(toks_np).long().to(device)
+                    with torch.no_grad():
+                        l = art_model_local(toks_t)
+                        if isinstance(l, tuple):
+                            l = l[0]
+                        feats = l.detach().cpu().numpy().mean(axis=1).astype(np.float32)
+
+                feats_list.append(feats.reshape(-1))
+                labels_list.append(sample.anomaly_label)
+
+            if not feats_list:
+                JOBS[jid].update({'status':'error','error':'no valid samples provided'})
+                return
+
+            X = np.vstack(feats_list)  # shape [N, feature_dim]
+            y = np.array(labels_list, dtype=np.float32)
+
+            X_t = torch.from_numpy(X).to(device)
+            y_t = torch.from_numpy(y).to(device)
+
+            # Normalize across dataset (per feature) to preserve absolute differences
+            X_t = (X_t - X_t.mean(dim=0, keepdim=True)) / (X_t.std(dim=0, keepdim=True) + 1e-6)
+
             for ep in range(epochs_local):
-                for sample in samples:
-                    if len(sample.input_data) != 1600:
-                        continue
-                    # tokenization (same as train_reactor)
-                    tokens = []
-                    arr = np.array(sample.input_data)
-                    for i in range(0, 1600, 50):
-                        chunk = arr[i:i+50]
-                        token_val = int((chunk.mean() + 1) * 1024) % 2048
-                        tokens.append(token_val)
-                    toks_np = np.array(tokens, dtype=np.int64).reshape(1,32)
-
-                    if use_onnx_local:
-                        logits = sess.run(['logits'], {input_name: toks_np})[0]
-                        feats = logits.mean(axis=1).astype(np.float32)
-                    else:
-                        toks_t = torch.from_numpy(toks_np).long().to(device)
-                        with torch.no_grad():
-                            l = art_model_local(toks_t)
-                            if isinstance(l, tuple):
-                                l = l[0]
-                            feats = l.detach().cpu().numpy().mean(axis=1).astype(np.float32)
-
-                    feats_t = torch.from_numpy(feats).to(device)
-                    # Normalize per-sample to avoid scale issues
-                    feats_t = (feats_t - feats_t.mean(dim=1, keepdim=True)) / (feats_t.std(dim=1, keepdim=True) + 1e-6)
-                    label_t = torch.tensor([sample.anomaly_label], dtype=torch.float32).to(device)
-
-                    optim_local.zero_grad()
-                    anom_pred, _ = model_local(feats_t)
-                    loss = criterion_local(anom_pred, label_t)
-                    loss.backward()
-                    optim_local.step()
-                    total_loss += loss.item()
+                optim_local.zero_grad()
+                anom_pred, _ = model_local(X_t)
+                loss = criterion_local(anom_pred, y_t)
+                loss.backward()
+                optim_local.step()
+                total_loss += loss.item()
 
             # Export trained Capa3-5
             try:
