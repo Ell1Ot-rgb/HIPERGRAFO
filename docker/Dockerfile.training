@@ -1,0 +1,49 @@
+# Usar una imagen base de Python optimizada
+FROM python:3.10-slim
+
+# Evitar que Python genere archivos .pyc y habilitar logs en tiempo real
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# --- OPTIMIZACIONES PARA CPU (2 CORES) ---
+# Limitar hilos para evitar sobrecarga de contexto (Context Switching)
+ENV OMP_NUM_THREADS=2
+ENV MKL_NUM_THREADS=2
+# Habilitar OneDNN (aceleración de operaciones matemáticas en CPU)
+ENV TF_ENABLE_ONEDNN_OPTS=1
+ENV TORCH_CPU_BACKEND=onednn
+
+# Establecer directorio de trabajo
+WORKDIR /app
+
+# Instalar dependencias del sistema necesarias
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libopenblas-dev \
+    libomp-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar solo los requerimientos primero para aprovechar la caché de Docker
+COPY docker/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Actualizar pip para evitar problemas de compilación
+RUN pip install --upgrade pip setuptools wheel
+
+# Instalar solo dependencias estables (sin Mamba compilado)
+RUN pip install --no-cache-dir \
+    einops \
+    && echo "✓ Dependencias ART V7 instaladas"
+
+# Copiar el código del servidor ART V7 (versión COMPLETA con Hipergrafo)
+COPY src/local_server/servidor_art_v7_hipergrafo.py .
+
+# Copiar workspace completo para acceso a almacenamiento de hipergrafos
+COPY . /workspaces/HIPERGRAFO
+
+# Exponer el puerto que usa FastAPI
+EXPOSE 8000
+
+# Comando para ejecutar el servidor ART V7 COMPLETO
+CMD ["python", "servidor_art_v7_hipergrafo.py"]

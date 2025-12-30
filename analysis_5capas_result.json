@@ -1,0 +1,18 @@
+{
+  "reactor_losses": [
+    114090.25,
+    12863.75,
+    2223.3505859375,
+    1026.2012939453125,
+    745.1407470703125
+  ],
+  "normal_mean": 1.0,
+  "anomaly_mean": 1.0,
+  "accuracy": 0.5,
+  "hipergrafos_added": [
+    "hipergrafo_epoch_001732.json",
+    "hipergrafo_epoch_001733.json",
+    "hipergrafo_epoch_001734.json",
+    "hipergrafo_epoch_001735.json"
+  ]
+}

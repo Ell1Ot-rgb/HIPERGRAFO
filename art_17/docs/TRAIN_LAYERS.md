@@ -5,6 +5,20 @@ Este documento explica cómo usar el endpoint **/train_layers_3_5** para entrena
 ## Endpoints
 
 - POST /train_layers_3_5
+
+Parameters (query string):
+- `epochs` (int): number of training epochs (default 1)
+- `norm_mode` (str): 'global' or 'per_sample' normalization
+- `vcr_var_weight` (float): fuerza de la penalización de varianza (default 25.0)
+- `vcr_cov_weight` (float): peso para penalizar covarianza off‑diagonal (default 1.0)
+- `seq_len` (int): número de pasos secuenciales para calcular covarianza (default 4)
+- `spectral_alpha` (float): spectral decoupling sobre logits (default 0.001)
+- `kb_weight` (float): Knuth‑Bendix confluence weight (default 0.1)
+- `edge_threshold` (float): umbral de creación de aristas en hipergrafo (default 0.5)
+
+Ejemplo:
+
+curl -X POST "http://localhost:8000/train_layers_3_5?epochs=3&norm_mode=global&vcr_var_weight=25.0&vcr_cov_weight=1.0" -H 'Content-Type: application/json' -d '{"samples": [{"input_data": [0.0, ..., 0.0], "anomaly_label": 0}]}'
   - Query params: `epochs` (int, por defecto 1)
   - JSON body: `{"samples": [{"input_data": [1600 floats], "anomaly_label": 0|1}, ...]}`
   - Response: `{ "status": "queued", "job_id": "job_1" }`

@@ -1,0 +1,15 @@
+{
+  "feat_shape": [
+    20,
+    2048
+  ],
+  "frac_sig_dims": 0.00048828125,
+  "sig_dims": 1,
+  "pca_explained_variance_ratio": [
+    0.7139294743537903,
+    0.20696042478084564
+  ],
+  "pca_pc1_mean_diff": -0.01924269273877144,
+  "mean_normal_mean": -5.339380264282227,
+  "mean_anom_mean": -5.342019081115723
+}

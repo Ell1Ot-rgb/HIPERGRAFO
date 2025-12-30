@@ -1,130 +1,18 @@
-[
-  {
-    "n": 20,
-    "signal": 0.0,
-    "hipergrafo": {
-      "nodos": 32,
-      "edges": 3,
-      "activacion_promedio": -0.0026296558207832277,
-      "ruta": "/workspaces/HIPERGRAFO/almacenamiento_hipergrafos/hipergrafo_epoch_001741.json"
-    },
-    "mean_norm": 0.4639582894742489,
-    "mean_anom": 0.4644409976899624,
-    "accuracy": 0.5,
-    "auc": 0.8125,
-    "frac_sig_dims_test": 0.0009765625,
-    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx"
+{
+  "global": {
+    "mean_norm": 0.017922551929950715,
+    "mean_anom": 0.017800392210483552,
+    "acc": 0.5,
+    "auc": 0.35250000000000004,
+    "frac_sig": 0.0009765625,
+    "hip_job": null
   },
-  {
-    "n": 20,
-    "signal": 0.5,
-    "hipergrafo": {
-      "nodos": 32,
-      "edges": 0,
-      "activacion_promedio": 0.003516183001920581,
-      "ruta": "/workspaces/HIPERGRAFO/almacenamiento_hipergrafos/hipergrafo_epoch_001742.json"
-    },
-    "mean_norm": 0.9082600027322769,
-    "mean_anom": 0.9083056002855301,
-    "accuracy": 0.5,
-    "auc": 0.625,
-    "frac_sig_dims_test": 0.0,
-    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx"
-  },
-  {
-    "n": 20,
-    "signal": 1.0,
-    "hipergrafo": {
-      "nodos": 32,
-      "edges": 0,
-      "activacion_promedio": 0.0004929921706207097,
-      "ruta": "/workspaces/HIPERGRAFO/almacenamiento_hipergrafos/hipergrafo_epoch_001743.json"
-    },
-    "mean_norm": 0.8731655851006508,
-    "mean_anom": 0.8730157688260078,
-    "accuracy": 0.5,
-    "auc": 0.390625,
-    "frac_sig_dims_test": 0.00048828125,
-    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx"
-  },
-  {
-    "n": 20,
-    "signal": 2.0,
-    "hipergrafo": {
-      "nodos": 32,
-      "edges": 0,
-      "activacion_promedio": 0.0013522321241907775,
-      "ruta": "/workspaces/HIPERGRAFO/almacenamiento_hipergrafos/hipergrafo_epoch_001744.json"
-    },
-    "mean_norm": 0.4636152610182762,
-    "mean_anom": 0.46178677678108215,
-    "accuracy": 0.5,
-    "auc": 0.15625,
-    "frac_sig_dims_test": 0.00244140625,
-    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx"
-  },
-  {
-    "n": 20,
-    "signal": 5.0,
-    "hipergrafo": {
-      "nodos": 32,
-      "edges": 0,
-      "activacion_promedio": 0.0086996246536728,
-      "ruta": "/workspaces/HIPERGRAFO/almacenamiento_hipergrafos/hipergrafo_epoch_001745.json"
-    },
-    "mean_norm": 0.5192406475543976,
-    "mean_anom": 0.5140052512288094,
-    "accuracy": 0.5,
-    "auc": 0.3125,
-    "frac_sig_dims_test": 0.4189453125,
-    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx"
-  },
-  {
-    "n": 50,
-    "signal": 0.0,
-    "hipergrafo": {
-      "nodos": 32,
-      "edges": 0,
-      "activacion_promedio": 0.001265672268345952,
-      "ruta": "/workspaces/HIPERGRAFO/almacenamiento_hipergrafos/hipergrafo_epoch_001746.json"
-    },
-    "mean_norm": 0.5387687295675277,
-    "mean_anom": 0.5385284394025802,
-    "accuracy": 0.5,
-    "auc": 0.5050000000000001,
-    "frac_sig_dims_test": 0.0,
-    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx"
-  },
-  {
-    "n": 50,
-    "signal": 0.5,
-    "hipergrafo": {
-      "nodos": 32,
-      "edges": 0,
-      "activacion_promedio": 0.013438635622151196,
-      "ruta": "/workspaces/HIPERGRAFO/almacenamiento_hipergrafos/hipergrafo_epoch_001747.json"
-    },
-    "mean_norm": 0.4766649678349495,
-    "mean_anom": 0.47685537189245225,
-    "accuracy": 0.5,
-    "auc": 0.5375,
-    "frac_sig_dims_test": 0.0,
-    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx"
-  },
-  {
-    "n": 50,
-    "signal": 1.0,
-    "hipergrafo": {
-      "nodos": 32,
-      "edges": 0,
-      "activacion_promedio": 0.001333073538262397,
-      "ruta": "/workspaces/HIPERGRAFO/almacenamiento_hipergrafos/hipergrafo_epoch_001748.json"
-    },
-    "mean_norm": 0.8447316318750382,
-    "mean_anom": 0.8448709130287171,
-    "accuracy": 0.5,
-    "auc": 0.7525,
-    "frac_sig_dims_test": 0.00048828125,
-    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx"
+  "per_sample": {
+    "mean_norm": 0.4676946043968201,
+    "mean_anom": 0.4676862880587578,
+    "acc": 0.5,
+    "auc": 0.38499999999999995,
+    "frac_sig": 0.0009765625,
+    "hip_job": null
   }
-]
+}

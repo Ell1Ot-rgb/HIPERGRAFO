@@ -438,18 +438,24 @@ class Capa3to5(nn.Module):
         )
         self.bn_capa3 = nn.LayerNorm(hidden)
         self.attn = nn.MultiheadAttention(embed_dim=hidden, num_heads=4, batch_first=True)
-        self.head_anom = nn.Linear(hidden, 1)
+        # Proyección para cálculo de covarianza en espacio reducido (32 nodos)
+        self.cov_proj = nn.Linear(hidden, 32)
+        self.head_anom = nn.Linear(hidden, 1)  # logits
         self.head_dend = nn.Linear(hidden, 16)
 
-    def forward(self, features):
+    def forward(self, features, return_all: bool = False):
         x = self.proj(features)
         x = self.bn_proj(x)
         c3 = self.capa3(x) + x.mean(dim=1, keepdim=True)
         c3 = self.bn_capa3(c3)
         attn_out, _ = self.attn(c3.unsqueeze(1), c3.unsqueeze(1), c3.unsqueeze(1))
         attn_out = attn_out.squeeze(1)
-        anom = torch.sigmoid(self.head_anom(attn_out)).squeeze(1)
+        anom_logits = self.head_anom(attn_out).squeeze(1)
+        anom = torch.sigmoid(anom_logits)
         dend = torch.tanh(self.head_dend(attn_out))
+        cov_feats = self.cov_proj(attn_out)
+        if return_all:
+            return anom_logits, anom, dend, cov_feats
         return anom, dend
 
 # Configuración de checkpoints
@@ -460,6 +466,15 @@ EXPORT_ONNX_ON_BEST = True           # Exportar ONNX cuando mejore el mejor loss
 EXPORT_IMPROVEMENT = 1e-6            # Mínima mejora para considerar mejor (bytes)
 BEST_LOSS = float('inf')             # Mejor loss observado
 EXPORT_DIR = Path('/workspaces/HIPERGRAFO/models')
+
+# Seq-VCR / hyperparams default (can be adjusted later)
+VCR_VAR_WEIGHT = 25.0
+VCR_COV_WEIGHT = 1.0
+VCR_TARGET_VAR = 1.0
+SEQ_LEN = 4
+SPECTRAL_ALPHA = 0.001
+KB_WEIGHT = 0.1
+EDGE_THRESHOLD = 0.5
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Cargar checkpoint al inicio
@@ -560,7 +575,7 @@ async def train_reactor(lote: LoteEntrenamiento):
             
             for val, idx_flat in zip(top_vals, top_idx):
                 i, j = idx_flat // correlacion.shape[0], idx_flat % correlacion.shape[0]
-                if i != j and val.item() > 0.1:
+                if i != j and val.item() > EDGE_THRESHOLD:
                     hipergrafo.agregar_hiperedge_conexion(
                         layer_idx,
                         [int(i.item()), int(j.item())],
@@ -639,7 +654,17 @@ async def train_reactor(lote: LoteEntrenamiento):
 
 # === Endpoint: Entrenar Capas 3-5 (usa ART ONNX como extractor o fallback PyTorch) ===
 @app.post("/train_layers_3_5")
-async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1, norm_mode: str = 'global'):
+async def train_layers_3_5(
+    lote: LoteEntrenamiento,
+    epochs: int = 1,
+    norm_mode: str = 'global',
+    vcr_var_weight: float = VCR_VAR_WEIGHT,
+    vcr_cov_weight: float = VCR_COV_WEIGHT,
+    spectral_alpha: float = SPECTRAL_ALPHA,
+    kb_weight: float = KB_WEIGHT,
+    seq_len: int = SEQ_LEN,
+    edge_threshold: float = EDGE_THRESHOLD
+):
     """Entrenar capas 3–5 en background.
     norm_mode: 'global' (normalizar por feature) o 'per_sample' (normalizar cada muestra)"""
     global JOB_COUNTER
@@ -648,13 +673,22 @@ async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1, norm_mode: 
     with JOB_LOCK:
         JOBS[job_id] = {"status": "queued", "epoch_start": stats.epoch, "norm_mode": norm_mode}
 
-    def run_job(samples, epochs_local, jid, norm_mode_local):
+    def run_job(samples, epochs_local, jid, norm_mode_local, vcr_var_weight_local=vcr_var_weight, vcr_cov_weight_local=vcr_cov_weight, spectral_alpha_local=spectral_alpha, kb_weight_local=kb_weight, seq_len_local=seq_len, edge_threshold_local=edge_threshold):
         try:
             JOBS[jid]["status"] = "running"
             # Use module-level Capa3to5 (defined above) for training the layers 3-5
             model_local = Capa3to5(feature_dim=2048, hidden=256).to(device)
             optim_local = torch.optim.Adam(model_local.parameters(), lr=1e-4)
-            criterion_local = nn.BCELoss()
+            criterion_local = nn.BCEWithLogitsLoss()
+            from collections import deque
+            seq_buf_local = deque(maxlen=seq_len_local)
+            # override local constants so loss uses requested params
+            VCR_VAR_W = vcr_var_weight_local
+            VCR_COV_W = vcr_cov_weight_local
+            SPECTRAL_A = spectral_alpha_local
+            KB_W = kb_weight_local
+            SEQ_L = seq_len_local
+            EDGE_THRESHOLD = edge_threshold_local
 
             # Try ONNX extractor first
             use_onnx_local = True
@@ -702,8 +736,13 @@ async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1, norm_mode: 
                 toks_np = np.array(tokens, dtype=np.int64).reshape(1,32)
 
                 if use_onnx_local:
-                    logits = sess.run(['logits'], {input_name: toks_np})[0]
-                    feats = logits.mean(axis=1).astype(np.float32)
+                    out_name_local = sess.get_outputs()[0].name
+                    logits = sess.run([out_name_local], {input_name: toks_np})[0]
+                    # support either (1,32,2048) logits or already-averaged feats
+                    if getattr(logits, 'ndim', None) == 3:
+                        feats = logits.mean(axis=1).astype(np.float32)
+                    else:
+                        feats = np.asarray(logits).astype(np.float32)
                 else:
                     toks_t = torch.from_numpy(toks_np).long().to(device)
                     with torch.no_grad():
@@ -733,18 +772,68 @@ async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1, norm_mode: 
                 # global normalization per feature
                 X_t = (X_t - X_t.mean(dim=0, keepdim=True)) / (X_t.std(dim=0, keepdim=True) + 1e-6)
 
+            # Train with minibatches and Seq-VCR / Spectral / KB losses
+            batch_size_local = 32
+            N = X_t.shape[0]
+            idxs = np.arange(N)
             for ep in range(epochs_local):
-                optim_local.zero_grad()
-                anom_pred, _ = model_local(X_t)
-                loss = criterion_local(anom_pred, y_t)
-                loss.backward()
-                optim_local.step()
-                total_loss += loss.item()
+                np.random.shuffle(idxs)
+                ep_loss = 0.0
+                for start in range(0, N, batch_size_local):
+                    batch_idx = idxs[start:start+batch_size_local]
+                    xb = X_t[batch_idx]
+                    yb = y_t[batch_idx]
+                    optim_local.zero_grad()
+
+                    model_local.train()
+                    logits1, anom1, dend1, cov1 = model_local(xb, return_all=True)
+                    logits2, anom2, dend2, cov2 = model_local(xb, return_all=True)
+
+                    # primary BCE loss (logits)
+                    bce = criterion_local(logits1, yb)
+                    # KB loss (local params)
+                    kb = KB_W * ( (logits1 - logits2).pow(2).mean() + (dend1 - dend2).pow(2).mean() )
+                    # spectral decoupling (local)
+                    spec = SPECTRAL_A * logits1.pow(2).mean()
+
+                    # Seq-VCR (use seq buffer length SEQ_L and local weights)
+                    seq_buf_local.append(cov1.detach())
+                    cov_loss_local = torch.tensor(0.0, device=device)
+                    var_loss_local = torch.tensor(0.0, device=device)
+                    if len(seq_buf_local) == SEQ_L:
+                        Xseq = torch.cat(list(seq_buf_local), dim=0)  # [SEQ_L*B, 32]
+                        var = Xseq.var(dim=0, unbiased=False)
+                        var_violation = (VCR_TARGET_VAR - var).clamp(min=0.0)
+                        var_loss_local = VCR_VAR_W * (var_violation.pow(2).sum())
+
+                        Xc = Xseq - Xseq.mean(dim=0, keepdim=True)
+                        nN = Xseq.shape[0]
+                        covm = (Xc.t() @ Xc) / float(nN)
+                        off_diag_norm = covm.pow(2).sum() - torch.diagonal(covm).pow(2).sum()
+                        cov_loss_local = VCR_COV_W * off_diag_norm
+
+                    loss_batch = bce + kb + spec + var_loss_local + cov_loss_local
+                    loss_batch.backward()
+                    optim_local.step()
+                    ep_loss += float(loss_batch.item())
+                total_loss += ep_loss
 
             # Export trained Capa3-5
             try:
                 model_local.eval()
-                torch.onnx.export(model_local, torch.randn(1,2048).to(device), str(EXPORT_DIR / 'art_17_capa3_5.onnx'), input_names=['features'], output_names=['anom','dend'], opset_version=18)
+                # Export only (probability,dend) via wrapper to keep compatibility with eval pipeline
+                class _Wrapper(nn.Module):
+                    def __init__(self, base):
+                        super().__init__()
+                        self.base = base
+                    def forward(self, features):
+                        # request full return to unpack logits, prob, dend, cov
+                        logits, prob, dend, cov = self.base(features, return_all=True)
+                        return prob, dend
+                wrapper = _Wrapper(model_local).to(device)
+                # save per-job ONNX to avoid overwriting
+                onnx_path = EXPORT_DIR / f'art_17_capa3_5_{jid}.onnx'
+                torch.onnx.export(wrapper, torch.randn(1,2048).to(device), str(onnx_path), input_names=['features'], output_names=['anom','dend'], opset_version=18)
                 # capture hipergrafo stats by reading latest hipergrafo file
                 hip_edges = None
                 hip_nodos = None

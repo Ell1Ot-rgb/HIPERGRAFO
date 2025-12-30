@@ -1,0 +1,50 @@
+[
+  {
+    "n": 20,
+    "signal": 5.0,
+    "norm_mode": "global",
+    "mean_norm": 0.012363363057374954,
+    "mean_anom": 0.11218124255537987,
+    "accuracy": 0.5,
+    "auc": 0.84375,
+    "frac_sig": 0.0283203125,
+    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx",
+    "hipergrafo": null
+  },
+  {
+    "n": 20,
+    "signal": 5.0,
+    "norm_mode": "per_sample",
+    "mean_norm": 0.5355024933815002,
+    "mean_anom": 0.8976722732186317,
+    "accuracy": 0.6875,
+    "auc": 0.8125,
+    "frac_sig": 0.81787109375,
+    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx",
+    "hipergrafo": null
+  },
+  {
+    "n": 20,
+    "signal": 5.0,
+    "norm_mode": "global",
+    "mean_norm": 0.08348476141691208,
+    "mean_anom": 0.40967604145407677,
+    "accuracy": 0.6875,
+    "auc": 0.96875,
+    "frac_sig": 0.0283203125,
+    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx",
+    "hipergrafo": null
+  },
+  {
+    "n": 20,
+    "signal": 5.0,
+    "norm_mode": "per_sample",
+    "mean_norm": 0.1874738521873951,
+    "mean_anom": 0.7202048115432262,
+    "accuracy": 0.75,
+    "auc": 0.953125,
+    "frac_sig": 0.81787109375,
+    "job_path": "/workspaces/HIPERGRAFO/models/art_17_capa3_5.onnx",
+    "hipergrafo": null
+  }
+]

@@ -27,24 +27,59 @@ STEPS_PER_EPOCH = 30
 HIDDEN = 512
 VOCAB = 2048
 
+# Seq-VCR and regularization hyperparameters (from user's recommendations)
+VCR_VAR_WEIGHT = 25.0       # fuerza para evitar colapso de varianza
+VCR_COV_WEIGHT = 1.0        # penalización de covarianza off-diagonal
+VCR_TARGET_VAR = 1.0        # varianza mínima deseada
+SEQ_LEN = 4                 # numero de pasos secuenciales para calcular cov (tiempo)
+SPECTRAL_ALPHA = 0.001      # spectral decoupling sobre logits
+KB_WEIGHT = 0.1             # Knuth-Bendix confluence weight
+EDGE_THRESHOLD = 0.5        # umbral por defecto para crear aristas en hipergrafo
+
 # Simple synthetic dataset generator (returns input 1600-d and anomaly label)
-def generate_batch(batch_size):
+from collections import deque
+
+def generate_batch(batch_size, physics=False):
+    """Generador: por defecto usa osciladores sintéticos si physics=True.
+    - Normales: sumas de senos (varias frecuencias/phasas)
+    - Anómalos: rupturas de fase / cambios de frecuencia
+    """
     X = []
     y = []
     for _ in range(batch_size):
-        # base signal
-        vec = np.random.normal(0, 0.3, size=(1600,))
-        # occasional anomaly: add Gaussian bump
-        if np.random.rand() < 0.2:
-            center = np.random.randint(0, 1600)
-            width = np.random.randint(10, 200)
-            amp = np.random.uniform(3, 6)
-            xs = np.arange(1600)
-            bump = amp * np.exp(-0.5 * ((xs - center) / width) ** 2)
-            vec += bump
-            lbl = 1
+        if physics:
+            # build multi-sinusoidal signal + small noise
+            t = np.linspace(0, 1, 1600)
+            n_components = np.random.randint(3, 6)
+            sig = np.zeros_like(t)
+            for _c in range(n_components):
+                freq = np.random.uniform(1, 10)
+                phase = np.random.uniform(0, 2 * np.pi)
+                amp = np.random.uniform(0.05, 0.5)
+                sig += amp * np.sin(2 * np.pi * freq * t + phase)
+            sig += np.random.normal(0, 0.02, size=t.shape)
+            # anomaly with probability 0.2: a phase jump or freq shift
+            if np.random.rand() < 0.2:
+                cut = np.random.randint(200, 1400)
+                sig[cut:] *= np.random.uniform(1.5, 3.0)  # amplitude change
+                sig[cut:] += 0.5 * np.sin(2 * np.pi * (freq * 2) * t[cut:])
+                lbl = 1
+            else:
+                lbl = 0
+            vec = sig
         else:
-            lbl = 0
+            # fallback noisy Gaussian with occasional bump (legacy behavior)
+            vec = np.random.normal(0, 0.3, size=(1600,))
+            if np.random.rand() < 0.2:
+                center = np.random.randint(0, 1600)
+                width = np.random.randint(10, 200)
+                amp = np.random.uniform(3, 6)
+                xs = np.arange(1600)
+                bump = amp * np.exp(-0.5 * ((xs - center) / width) ** 2)
+                vec += bump
+                lbl = 1
+            else:
+                lbl = 0
         X.append(vec.astype(np.float32))
         y.append(lbl)
     return np.stack(X), np.array(y, dtype=np.float32)
@@ -76,8 +111,10 @@ class Capa3to5(nn.Module):
         )
         # Capa4 attention: use simple MHA implemented via nn.MultiheadAttention
         self.attn = nn.MultiheadAttention(embed_dim=hidden, num_heads=4, batch_first=True)
+        # Proyección para cálculo de covarianza en espacio reducido (32 nodos)
+        self.cov_proj = nn.Linear(hidden, 32)
         # Capa5 heads
-        self.head_anom = nn.Linear(hidden, 1)
+        self.head_anom = nn.Linear(hidden, 1)  # produces logits (no sigmoid here)
         self.head_dend = nn.Linear(hidden, 16)
 
     def forward(self, features):
@@ -87,9 +124,12 @@ class Capa3to5(nn.Module):
         # Multihead expects sequence: we'll add a seq dim of 1
         attn_out, _ = self.attn(c3.unsqueeze(1), c3.unsqueeze(1), c3.unsqueeze(1))
         attn_out = attn_out.squeeze(1)
-        anom = torch.sigmoid(self.head_anom(attn_out)).squeeze(1)
+        anom_logits = self.head_anom(attn_out).squeeze(1)  # logits for BCEWithLogitsLoss
+        anom_prob = torch.sigmoid(anom_logits)
         dend = torch.tanh(self.head_dend(attn_out))
-        return anom, dend
+        # cov features for Seq-VCR (project to 32 dims for efficiency and alignment with hipergrafo)
+        cov_feats = self.cov_proj(attn_out)
+        return anom_logits, anom_prob, dend, cov_feats
 
 
 def main():
@@ -99,7 +139,7 @@ def main():
     use_onnx = True
     sess = None
     input_name = None
-    out_name = 'logits'
+    out_name = sess.get_outputs()[0].name
     try:
         sess = ort.InferenceSession(str(ART_ONNX), providers=['CPUExecutionProvider'])
         input_name = sess.get_inputs()[0].name
@@ -131,13 +171,17 @@ def main():
 
     model = Capa3to5(feature_dim=VOCAB, hidden=HIDDEN).to(DEVICE)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    criterion = nn.BCELoss()
+    criterion = nn.BCEWithLogitsLoss()
+
+    # Buffers for sequential statistics
+    seq_buffer = deque(maxlen=SEQ_LEN)
 
     print('Start smoke training: epochs', EPOCHS)
     for epoch in range(EPOCHS):
         epoch_loss = 0.0
         for step in range(STEPS_PER_EPOCH):
-            X_batch, y_batch = generate_batch(BATCH_SIZE)
+            # Use physics signals for better learning of dynamics
+            X_batch, y_batch = generate_batch(BATCH_SIZE, physics=True)
             toks = to_tokens(X_batch)
 
             # get features via ONNX or PyTorch ART model
@@ -153,22 +197,53 @@ def main():
                 toks_t = torch.from_numpy(toks).long().to(DEVICE)
                 with torch.no_grad():
                     logits = art_model(toks_t) if hasattr(art_model, '__call__') else art_model.forward(toks_t)
-                    # ART_Brain forward returns logits (batch,32,2048) or similar; handle shapes
                     if isinstance(logits, tuple):
                         logits = logits[0]
-                    # Convert tensor to numpy
                     feats = logits.detach().cpu().numpy().mean(axis=1).astype(np.float32)
 
-            feats_t = torch.from_numpy(feats).to(DEVICE)
+            feats_t = torch.from_numpy(feats).to(DEVICE)  # [B, feature_dim]
             labels_t = torch.from_numpy(y_batch).to(DEVICE)
 
+            model.train()
             optimizer.zero_grad()
-            anom_pred, _ = model(feats_t)
-            loss = criterion(anom_pred, labels_t)
-            loss.backward()
+
+            # Two forward passes for Knuth-Bendix confluence (different dropout realizations)
+            logits1, anom1, dend1, cov1 = model(feats_t, return_all=True)
+            logits2, anom2, dend2, cov2 = model(feats_t, return_all=True)
+
+            # Primary anomaly loss (BCE with logits)
+            bce_loss = criterion(logits1, labels_t)
+
+            # Knuth-Bendix confluence loss (consistency under dropout)
+            kb_loss = KB_WEIGHT * ( (logits1 - logits2).pow(2).mean() + (dend1 - dend2).pow(2).mean() )
+
+            # Spectral decoupling on logits (penalize large logits)
+            spec_loss = SPECTRAL_ALPHA * (logits1.pow(2).mean())
+
+            # Seq-VCR: accumulate cov features across steps (time) and compute var/cov penalties
+            seq_buffer.append(cov1.detach())  # cov1 shape [B, 32]
+            cov_loss = torch.tensor(0.0, device=DEVICE)
+            var_loss = torch.tensor(0.0, device=DEVICE)
+            if len(seq_buffer) == SEQ_LEN:
+                Xseq = torch.cat(list(seq_buffer), dim=0)  # [SEQ_LEN*B, 32]
+                # variance per-dim
+                var = Xseq.var(dim=0, unbiased=False)
+                var_violation = (VCR_TARGET_VAR - var).clamp(min=0.0)
+                var_loss = VCR_VAR_WEIGHT * (var_violation.pow(2).sum())
+
+                # covariance matrix and off-diagonal penalty
+                Xc = Xseq - Xseq.mean(dim=0, keepdim=True)
+                N = Xseq.shape[0]
+                cov = (Xc.t() @ Xc) / float(N)
+                off_diag_norm = cov.pow(2).sum() - torch.diagonal(cov).pow(2).sum()
+                cov_loss = VCR_COV_WEIGHT * off_diag_norm
+
+            total_loss = bce_loss + kb_loss + spec_loss + var_loss + cov_loss
+
+            total_loss.backward()
             optimizer.step()
 
-            epoch_loss += loss.item()
+            epoch_loss += float(total_loss.item())
         print(f'Epoch {epoch+1}/{EPOCHS} avg_loss: {epoch_loss/STEPS_PER_EPOCH:.6f}')
 
     # Quick validation on a small batch (use PyTorch ART model fallback if ONNX unavailable)

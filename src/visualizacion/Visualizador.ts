@@ -115,27 +115,40 @@ export class Visualizador {
         const nodosGrafo: any[] = [];
         const edgesGrafo: any[] = [];
         if (coherencia && coherencia.imagenMental) {
-            coherencia.imagenMental.obtenerNodos().forEach((n: any) => {
-                nodosGrafo.push({
-                    data: { 
-                        id: n.id, 
-                        label: n.label.substring(0, 20), // Acortar etiquetas largas
-                        tipo: n.metadata.tipo || 'CONCEPTO',
-                        valor: n.metadata.relevancia || n.metadata.valor || 0
-                    }
-                });
-            });
-            coherencia.imagenMental.obtenerHiperedges().forEach((edge: any) => {
-                const edgeId = `edge_${edge.id}`;
-                nodosGrafo.push({
-                    data: { id: edgeId, label: '', tipo: 'HIPEREDGE', valor: 0 }
-                });
-                edge.nodos.forEach((nodoId: any) => {
-                    edgesGrafo.push({
-                        data: { source: nodoId, target: edgeId }
+            // Convertir Hipergrafo a formato Cytoscape
+            try {
+                coherencia.imagenMental.obtenerNodos().forEach((n: any) => {
+                    nodosGrafo.push({
+                        data: { 
+                            id: n.id, 
+                            label: n.label ? n.label.substring(0, 20) : n.id,
+                            tipo: (n.metadata && n.metadata.tipo) || 'CONCEPTO',
+                            valor: (n.metadata && (n.metadata.relevancia || n.metadata.valor)) || 0
+                        }
                     });
                 });
-            });
+                coherencia.imagenMental.obtenerHiperedges().forEach((edge: any) => {
+                    const edgeId = `edge_${edge.id}`;
+                    nodosGrafo.push({
+                        data: { id: edgeId, label: '', tipo: 'HIPEREDGE', valor: 0 }
+                    });
+                    edge.nodos.forEach((nodoId: any) => {
+                        edgesGrafo.push({
+                            data: { source: nodoId, target: edgeId }
+                        });
+                    });
+                });
+            } catch (err) {
+                console.error("Error mapeando imagen mental:", err);
+            }
+        }
+
+        // Convertir Map de sensorial a objeto plano para JSON
+        const sensorialObj: any = {};
+        if (sensorial instanceof Map) {
+            sensorial.forEach((v, k) => { sensorialObj[k] = v; });
+        } else {
+            Object.assign(sensorialObj, sensorial);
         }
         
         // 2. Fusionar el estado
@@ -144,15 +157,15 @@ export class Visualizador {
             timestamp: Date.now(),
             grafo: { nodes: nodosGrafo, edges: edgesGrafo },
             cognicion: {
-                sensorial,
+                sensorial: sensorialObj,
                 contexto,
                 decision
             },
             coherencia: {
                 ...coherencia,
-                imagenMental: undefined // No enviar el objeto completo, ya está en 'grafo'
+                imagenMental: undefined // No enviar el objeto completo
             },
-            neuronal: contexto, // Para compatibilidad con vistas antiguas
+            neuronal: contexto, // Para compatibilidad
         };
     }
 
