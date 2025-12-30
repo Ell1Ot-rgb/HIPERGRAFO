@@ -421,6 +421,37 @@ JOBS: Dict[str, Dict[str, Any]] = {}
 JOB_LOCK = Lock()
 JOB_COUNTER = 0
 
+# -------------------
+# Capa3to5 model (module-level) - usable by endpoint and tests
+# -------------------
+class Capa3to5(nn.Module):
+    def __init__(self, feature_dim=2048, hidden=256):
+        super().__init__()
+        self.proj = nn.Linear(feature_dim, hidden * 2)
+        # Use LayerNorm to support batch size = 1 during training
+        self.bn_proj = nn.LayerNorm(hidden * 2)
+        self.capa3 = nn.Sequential(
+            nn.Linear(hidden * 2, 4096),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(4096, hidden)
+        )
+        self.bn_capa3 = nn.LayerNorm(hidden)
+        self.attn = nn.MultiheadAttention(embed_dim=hidden, num_heads=4, batch_first=True)
+        self.head_anom = nn.Linear(hidden, 1)
+        self.head_dend = nn.Linear(hidden, 16)
+
+    def forward(self, features):
+        x = self.proj(features)
+        x = self.bn_proj(x)
+        c3 = self.capa3(x) + x.mean(dim=1, keepdim=True)
+        c3 = self.bn_capa3(c3)
+        attn_out, _ = self.attn(c3.unsqueeze(1), c3.unsqueeze(1), c3.unsqueeze(1))
+        attn_out = attn_out.squeeze(1)
+        anom = torch.sigmoid(self.head_anom(attn_out)).squeeze(1)
+        dend = torch.tanh(self.head_dend(attn_out))
+        return anom, dend
+
 # Configuración de checkpoints
 SAVE_CHECKPOINT_EVERY = 5  # 0 = deshabilitado, >0 = guardar cada N epochs
 
@@ -618,35 +649,7 @@ async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1):
     def run_job(samples, epochs_local, jid):
         try:
             JOBS[jid]["status"] = "running"
-            # Modelo de capas 3-5 (copiado del script de pruebas)
-            class Capa3to5(nn.Module):
-                def __init__(self, feature_dim=2048, hidden=256):
-                    super().__init__()
-                    self.proj = nn.Linear(feature_dim, hidden * 2)
-                    # Use LayerNorm to support batch size = 1 during training
-                    self.bn_proj = nn.LayerNorm(hidden * 2)
-                    self.capa3 = nn.Sequential(
-                        nn.Linear(hidden * 2, 4096),
-                        nn.ReLU(),
-                        nn.Dropout(0.1),
-                        nn.Linear(4096, hidden)
-                    )
-                    self.bn_capa3 = nn.LayerNorm(hidden)
-                    self.attn = nn.MultiheadAttention(embed_dim=hidden, num_heads=4, batch_first=True)
-                    self.head_anom = nn.Linear(hidden, 1)
-                    self.head_dend = nn.Linear(hidden, 16)
-                def forward(self, features):
-                    x = self.proj(features)
-                    # BatchNorm expects [batch, features]
-                    x = self.bn_proj(x)
-                    c3 = self.capa3(x) + x.mean(dim=1, keepdim=True)
-                    c3 = self.bn_capa3(c3)
-                    attn_out, _ = self.attn(c3.unsqueeze(1), c3.unsqueeze(1), c3.unsqueeze(1))
-                    attn_out = attn_out.squeeze(1)
-                    anom = torch.sigmoid(self.head_anom(attn_out)).squeeze(1)
-                    dend = torch.tanh(self.head_dend(attn_out))
-                    return anom, dend
-
+            # Use module-level Capa3to5 (defined above) for training the layers 3-5
             model_local = Capa3to5(feature_dim=2048, hidden=256).to(device)
             optim_local = torch.optim.Adam(model_local.parameters(), lr=1e-4)
             criterion_local = nn.BCELoss()
