@@ -623,7 +623,8 @@ async def train_layers_3_5(lote: LoteEntrenamiento, epochs: int = 1):
                 def __init__(self, feature_dim=2048, hidden=256):
                     super().__init__()
                     self.proj = nn.Linear(feature_dim, hidden * 2)
-                    self.bn_proj = nn.BatchNorm1d(hidden * 2)
+                    # Use LayerNorm to support batch size = 1 during training
+                    self.bn_proj = nn.LayerNorm(hidden * 2)
                     self.capa3 = nn.Sequential(
                         nn.Linear(hidden * 2, 4096),
                         nn.ReLU(),
