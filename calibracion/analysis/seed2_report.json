@@ -1,0 +1,14 @@
+{
+  "seed_ck": "modelos_guardados/multi_seed_seed_2.pth",
+  "n_stimuli": 8,
+  "atom_mean_mean": 1.9825529307127e-09,
+  "atom_mean_std": 3.676057255322758e-09,
+  "logits_mean": -0.595743702724576,
+  "logits_std": 0.5341628637257952,
+  "corr_atom_logits": -0.5637623062325366,
+  "plots": {
+    "atoms_heatmap": "analysis/diagnosis/seed2_atoms_heatmap.png",
+    "logits": "analysis/diagnosis/seed2_logits.png",
+    "head_weights": "analysis/diagnosis/seed2_head_weights.png"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "best": {
+    "scale": -0.4,
+    "offset": 0.4,
+    "auc": 0.835722
+  },
+  "calibrated_auc": 0.835722,
+  "validate_raw": {
+    "passed": false,
+    "stats": {
+      "mean_std": 0.5579491257667542,
+      "frac_low_var": 0.0,
+      "high_corr_frac": 0.00010050251256281407,
+      "auc": 0.160775,
+      "frac_sig": 0.805625
+    },
+    "reasons": [
+      "auc 0.160775 < 0.85"
+    ]
+  }
+}

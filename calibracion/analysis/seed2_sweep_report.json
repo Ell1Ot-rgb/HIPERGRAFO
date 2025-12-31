@@ -1,0 +1,8 @@
+{
+  "ck": "modelos_guardados/multi_seed_seed_2.pth",
+  "corr_atom_logit": 0.7340069817377027,
+  "n_conditions": 96,
+  "scatter": "analysis/diagnosis/seed2_sweep_scatter.png",
+  "heatmap": "analysis/diagnosis/seed2_sweep_heatmap_meanlogit.png",
+  "attempt_flip": false
+}
