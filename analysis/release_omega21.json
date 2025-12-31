@@ -1,0 +1,20 @@
+{
+  "onnx": "models/best_omega21.onnx",
+  "sha256": "bfa8fb1374b907cc72c8b32b149716642cb07e55d43016766cbca49b2dec7f9c",
+  "calibration": {
+    "scale": -0.38,
+    "offset": 0.42,
+    "source": "analysis/diagnosis/calibration_negscale_ultra_fine.json",
+    "meta": "analysis/diagnosis/calibration_negscale_ultra_fine_meta.json",
+    "heatmap": "analysis/diagnosis/calibration_negscale_ultra_fine_heatmap.png"
+  },
+  "calibrated_auc": 0.841634,
+  "validated_at": "2025-12-31T00:00:00Z",
+  "notes": "Calibración auditada: scale=-0.38, offset=0.42; AUC estable ≈ 0.8416 on synthetic validation. Promoted as 'Omega-Calibrated' but does not reach hard threshold 0.85.",
+  "artifacts": [
+    "models/best_omega21.onnx",
+    "analysis/diagnosis/calibration_negscale_ultra_fine.json",
+    "analysis/diagnosis/calibration_negscale_ultra_fine_meta.json",
+    "analysis/diagnosis/calibration_negscale_ultra_fine_heatmap.png"
+  ]
+}
