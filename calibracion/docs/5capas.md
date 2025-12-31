@@ -32,6 +32,45 @@ python3 scripts/ci/check_5capas.py --checkpoint modelos_guardados/multi_seed_see
   - Número de LSTM / layers disponibles.
   - Generación de 25 "átomos" mediante `diagnose_alucinacion.atoms_from_wave` y que su forma sea (25, ).
 
+## Ejemplos de salida esperada (fragmentos)
+
+- **Fragmento de metadatos de calibración** (`analysis/diagnosis/calibration_negscale_ultra_fine_meta.json`)
+
+```json
+{
+  "best": { "scale": -0.38, "offset": 0.42, "auc": 0.841634 },
+  "calibrated_auc": 0.841634,
+  "validate_raw": { "passed": false, "stats": { "auc": 0.160775 } }
+}
+```
+
+(Archivo de ejemplo: `calibracion/docs/examples/expected_calibration_meta.json`)
+
+- **Fragmento de informe de diagnóstico (seed2)** (`analysis/diagnosis/seed2_diag_report.json`)
+
+```json
+{
+  "seed_ck": "modelos_guardados/multi_seed_seed_2.pth",
+  "n_stimuli": 8,
+  "corr_atom_logits": 0.734,
+  "plots": {
+    "atoms_heatmap": "calibracion/analysis/seed2_atoms_heatmap.png",
+    "logits": "calibracion/analysis/seed2_diag_logits.png"
+  }
+}
+```
+
+(Archivo de ejemplo: `calibracion/docs/examples/expected_seed2_diag_report.json`)
+
+## Vistas rápidas (imágenes)
+- Heatmap de átomos (ejemplo):
+
+![Seed2 atoms heatmap](../analysis/seed2_atoms_heatmap.png)
+
+- Heatmap de calibración (grilla de AUC):
+
+![Calibration heatmap](../analysis/calibration_negscale_ultra_fine_heatmap.png)
+
 ---
 
 ### Notas operacionales

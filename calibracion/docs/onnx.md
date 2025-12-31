@@ -51,6 +51,32 @@ else:
 print('output shape', getattr(logits,'shape', None))
 ```
 
+## Ejemplo de salida de introspección ONNX (esperada)
+
+Al inspeccionar un ONNX con `onnxruntime` se espera ver algo como:
+
+```
+ONNX input: x tensor(float) output: features [1, 1600]
+```
+
+Y si el ONNX devuelve un `score` (readout exported), el output shape será `[1, 1]`.
+
+## Ejemplo: JSON corto de validación (esperado)
+
+```json
+{
+  "passed": false,
+  "stats": {
+    "mean_std": 0.5579,
+    "high_corr_frac": 0.0,
+    "auc": 0.160775,
+    "frac_sig": 0.8056
+  },
+  "reasons": ["auc 0.160775 < 0.85"]
+}
+```
+
+(Estos fragmentos ayudan a revisar si el ONNX y la validación están produciendo resultados con la misma estructura que usamos en CI.)
 ## Recomendaciones de despliegue
 - Valida todas las rutas `input_type`/`output_shape` antes de integrar en producción. Usa `calibrate_and_retest.py` para encontrar los parámetros `scale`/`offset` apropiados para la entrada si trabajas con trazas de sensores reales.
 
