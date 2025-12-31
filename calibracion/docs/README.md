@@ -18,6 +18,7 @@ Recopilar el sistema calibrado y la documentación asociada: ONNX promovido, arc
 - metadata: `analysis/release_omega21.json`
 
 ## Reproducción rápida
+
 1. Reproducir la barrida ultra-fina (ejemplo):
 
 ```bash
@@ -29,6 +30,38 @@ python3 calibracion/scripts/calibrate_and_retest.py calibracion/models/best_omeg
 ```bash
 python3 calibracion/scripts/validate_omega21.py calibracion/models/best_omega21.onnx --n-samples 2000
 ```
+
+3. Diagnóstico de "alucinación" (átomos vs logits) usando checkpoint:
+
+```bash
+python3 scripts/diagnose_alucinacion.py modelos_guardados/multi_seed_seed_2.pth --out-prefix seed2_diag
+# Salidas: heatmaps y report JSON en analysis/diagnosis
+```
+
+4. Reentrenamiento quirúrgico (Head / Readout) – ejemplo:
+
+```bash
+python3 scripts/tune_head_seed.py --checkpoint modelos_guardados/multi_seed_seed_2.pth --train-readout --unfreeze-head --epochs 3 --steps-per-epoch 200 --batch-size 64 --lr 1e-4 --out calibracion/models/best_omega21_readout_plus_head.onnx
+```
+
+5. Verificar las 5 capas (script de auditoría):
+
+```bash
+python3 scripts/ci/check_5capas.py --checkpoint modelos_guardados/multi_seed_seed_2.pth --onnx calibracion/models/best_omega21.onnx
+```
+
+6. Ejecutar la verificación corta de calibración en CI (localmente):
+
+```bash
+python3 scripts/ci/check_calibration.py --release-file analysis/release_omega21.json --n-samples 200 --tolerance 0.06
+```
+
+---
+
+## Archivos adicionales
+- `calibracion/docs/onnx.md` — detalles por ONNX y su uso en scripts
+- `scripts/ci/check_5capas.py` — verificación '5 capas'
+- `scripts/ci/check_calibration.py` — smoke check de calibración usado por CI
 
 ## Notas
 - No se promovió un modelo que superara 0.85 en AUC de forma nativa: la solución operativa es la calibración (lente externa). Se documenta todo el proceso y los artefactos en `analysis/release_omega21.json`.
