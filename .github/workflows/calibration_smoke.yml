@@ -1,0 +1,30 @@
+name: Calibration smoke test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  calibration-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run calibration smoke check
+        run: |
+          # allow some slack in synthetic smoke test (tolerance 0.06)
+          python3 scripts/ci/check_calibration.py --release-file analysis/release_omega21.json --n-samples 200 --tolerance 0.06
