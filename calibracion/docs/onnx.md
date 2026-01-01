@@ -82,3 +82,8 @@ Y si el ONNX devuelve un `score` (readout exported), el output shape será `[1, 
 
 ## Auditoría y trazabilidad
 - Para cada ONNX promovido mantén `release_omega21.json` que incluye `sha256` y la calibración recomendada; los artefactos y scripts reproducibles están en `calibracion/`.
+
+### Bundle core (nueva)
+- Hemos creado un bundle *core* con los ONNX principales en `models/core/v1.1-Omega-Calibrated` y un `manifest.json` con hashes (`sha256`) y tamaños. Este bundle es la referencia inmutable para futuros proyectos que quieran basarse en la campaña `v1.1-Omega-Calibrated`.
+- La rama y tag git asociadas son **`core/v1.1-Omega-Calibrated`** y el `manifest.json` dentro del bundle indica exactamente qué archivos y firmas contiene.
+- Uso: clona esta rama o apunta a `models/core/v1.1-Omega-Calibrated` para obtener el conjunto canónico de ONNX (promovido + variantes experimentales).
